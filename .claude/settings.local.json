@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:standard-charges-prod.s3.amazonaws.com)",
+      "WebFetch(domain:www.mountsinai.org)",
+      "Bash(curl -s \"https://standard-charges-prod.s3.amazonaws.com/pricing_files/133971298-1801992631_nyu-langone-tisch_standardcharges.csv\")",
+      "Bash(curl -s \"https://www.mountsinai.org/files/mrf/131624096_mount-sinai-hospital_standardcharges.json\")",
+      "Bash(python3:*)",
+      "Bash(npm install recharts papaparse)",
+      "Bash(npm install --save-dev @types/papaparse tsx)",
+      "Bash(npx prisma migrate dev --name add_hospital_price_transparency)",
+      "Bash(npx tsc --noEmit)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(lsof -ti :3000)",
+      "Bash(lsof -ti :3001)",
+      "Bash(npm run seed:prices)",
+      "Bash(npm run seed:prices nyu-langone)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(gh auth:*)"
+    ]
+  }
+}

@@ -1,0 +1,75 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  projects  Project[]
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  name      String
+  userId    String?
+  messages  String   @default("[]")
+  data      String   @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Hospital {
+  id         String    @id @default(cuid())
+  name       String
+  address    String
+  borough    String    @default("Manhattan")
+  sourceFile String
+  lastSeeded DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  prices     PriceEntry[]
+}
+
+model Procedure {
+  id          String   @id @default(cuid())
+  cptCode     String   @unique
+  name        String
+  category    String
+  description String   @default("")
+
+  prices      PriceEntry[]
+}
+
+model PriceEntry {
+  id           String   @id @default(cuid())
+  hospitalId   String
+  procedureId  String
+  payerName    String
+  payerType    String
+  priceInCents Int
+  priceType    String
+  rawCode      String   @default("")
+  createdAt    DateTime @default(now())
+
+  hospital     Hospital  @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  procedure    Procedure @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+
+  @@index([procedureId])
+  @@index([procedureId, payerType])
+}
