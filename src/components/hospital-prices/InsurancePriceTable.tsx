@@ -342,7 +342,7 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
 
         {/* Footer */}
         <div className="border-t border-neutral-100 bg-neutral-50 px-4 py-2.5 text-xs text-neutral-400">
-          {rows.length} hospitals · "You pay" = what insurance agreed to pay × your share % (assumes deductible is already met) · Actual cost depends on your specific plan
+          {rows.length} hospitals · &quot;You pay&quot; = what insurance agreed to pay × your share % (assumes deductible is already met) · Actual cost depends on your specific plan
         </div>
 
         {/* Transparency explainer */}
@@ -362,11 +362,11 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
               <dl className="mt-3 space-y-2.5">
                 <div>
                   <dt className="font-semibold text-neutral-800">What insurance pays the hospital</dt>
-                  <dd className="mt-0.5 text-neutral-500">The discounted price your insurance company has agreed to pay the hospital — much lower than what they initially charge. You don't pay this full amount yourself.</dd>
+                  <dd className="mt-0.5 text-neutral-500">The discounted price your insurance company has agreed to pay the hospital — much lower than what they initially charge. You don&apos;t pay this full amount yourself.</dd>
                 </div>
                 <div>
                   <dt className="font-semibold text-neutral-800">You pay</dt>
-                  <dd className="mt-0.5 text-neutral-500">Your estimated portion of the bill based on your coinsurance (the % you owe after your deductible is met). If you haven't hit your deductible yet, your actual cost may be higher.</dd>
+                  <dd className="mt-0.5 text-neutral-500">Your estimated portion of the bill based on your coinsurance (the % you owe after your deductible is met). If you haven&apos;t hit your deductible yet, your actual cost may be higher.</dd>
                 </div>
                 <div>
                   <dt className="font-semibold text-neutral-800">Insurance picks up</dt>
@@ -378,7 +378,7 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
                 </div>
                 <div>
                   <dt className="font-semibold text-neutral-800">Where does this data come from?</dt>
-                  <dd className="mt-0.5 text-neutral-500">Prices come from official price lists that hospitals are required by law to publish. We also use AI estimates when a hospital's file doesn't include a specific procedure.</dd>
+                  <dd className="mt-0.5 text-neutral-500">Prices come from official price lists that hospitals are required by law to publish. We also use AI estimates when a hospital&apos;s file doesn&apos;t include a specific procedure.</dd>
                 </div>
               </dl>
             </div>

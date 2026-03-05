@@ -326,7 +326,7 @@ export default function UploadPage() {
                   </dd>
                 </dl>
                 {result.schemaDetected.notes && (
-                  <p className="mt-2 text-xs text-neutral-500 italic">"{result.schemaDetected.notes}"</p>
+                  <p className="mt-2 text-xs text-neutral-500 italic">&quot;{result.schemaDetected.notes}&quot;</p>
                 )}
               </div>
             )}

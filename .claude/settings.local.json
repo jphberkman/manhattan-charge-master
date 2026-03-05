@@ -17,7 +17,15 @@
       "Bash(npm run seed:prices nyu-langone)",
       "Bash(npm install:*)",
       "Bash(npm run:*)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(wc:*)",
+      "Bash(sqlite3:*)",
+      "Bash(ls:*)",
+      "WebFetch(domain:hhinternet.blob.core.windows.net)",
+      "Bash(curl:*)",
+      "Bash(NODE_OPTIONS='--require ./node-compat.cjs' npx tsx:*)",
+      "Bash(node:*)",
+      "Bash(git:*)"
     ]
   }
 }

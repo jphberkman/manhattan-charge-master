@@ -499,7 +499,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                     <p className="text-xs text-neutral-500 mb-2"><span className="font-semibold text-neutral-700">Assumptions: </span>{breakdown.assumptions}</p>
                   )}
                   <p className="text-xs text-neutral-400 italic">
-                    Prices are sourced from hospitals' official price lists (required by federal law) and AI estimates where data isn't available. Items marked "Real data" use actual hospital records. Your actual bill may differ based on your specific plan, whether you've met your deductible, and clinical details.
+                    Prices are sourced from hospitals&apos; official price lists (required by federal law) and AI estimates where data isn&apos;t available. Items marked &quot;Real data&quot; use actual hospital records. Your actual bill may differ based on your specific plan, whether you&apos;ve met your deductible, and clinical details.
                   </p>
                 </div>
               </div>

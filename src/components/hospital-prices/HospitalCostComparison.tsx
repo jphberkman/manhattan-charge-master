@@ -353,7 +353,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
           <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 text-xs text-neutral-400">
             {entries.filter((e) => !e.isAiEstimate).length} hospitals with real price data ·{" "}
             {entries.filter((e) => e.isAiEstimate).length} estimated ·
-            "You pay" = the price your insurance negotiated × your {Math.round(coinsurance * 100)}% share, once your deductible is met
+            &quot;You pay&quot; = the price your insurance negotiated × your {Math.round(coinsurance * 100)}% share, once your deductible is met
           </div>
         </>
       )}

@@ -27,5 +27,3 @@ export async function createProject(input: CreateProjectInput) {
 
   return project;
 }
-claude
-

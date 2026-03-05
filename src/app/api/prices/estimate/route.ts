@@ -86,7 +86,7 @@ Rules:
           payerType: (payerType === "all" ? "commercial" : payerType) as any,
           priceUsd: e.priceUsd,
           priceType: e.priceType as any,
-          source: "ai-estimate",
+          source: "ai-estimate" as const,
         };
       })
       .sort((a, b) => a.priceUsd - b.priceUsd);
