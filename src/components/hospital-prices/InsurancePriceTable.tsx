@@ -165,7 +165,7 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
 
       {/* Coinsurance selector */}
       <div className="flex items-center gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-3">
-        <span className="text-xs font-medium text-neutral-600 shrink-0">Your coinsurance rate:</span>
+        <span className="text-xs font-medium text-neutral-600 shrink-0">Your share of the bill (coinsurance):</span>
         <div className="flex flex-wrap gap-1.5">
           {COINSURANCE_OPTIONS.map((opt) => (
             <button
@@ -197,17 +197,17 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
                   Hospital <SortIcon col="hospital" />
                 </Th>
                 <Th onClick={() => toggleSort("negotiated")} className="text-right">
-                  {insuranceLabel} Rate <SortIcon col="negotiated" />
+                  {insuranceLabel} pays hospital <SortIcon col="negotiated" />
                 </Th>
                 <Th onClick={() => toggleSort("patientCost")} className="text-right">
-                  You Pay ({Math.round(coinsurance * 100)}%) <SortIcon col="patientCost" />
+                  You pay ({Math.round(coinsurance * 100)}%) <SortIcon col="patientCost" />
                 </Th>
-                <Th className="text-right">Insurer Pays</Th>
+                <Th className="text-right">Insurance picks up</Th>
                 <Th onClick={() => toggleSort("cash")} className="text-right">
-                  Cash Price <SortIcon col="cash" />
+                  No insurance (cash) <SortIcon col="cash" />
                 </Th>
                 <Th onClick={() => toggleSort("diff")} className="text-center">
-                  Cash vs. Insurance <SortIcon col="diff" />
+                  Better to use insurance? <SortIcon col="diff" />
                 </Th>
               </tr>
             </thead>
@@ -307,7 +307,7 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
                             {fmt.format(insurerPays)}
                           </span>
                           <p className="text-xs text-neutral-400">
-                            {Math.round((1 - coinsurance) * 100)}% of rate
+                            {Math.round((1 - coinsurance) * 100)}% covered
                           </p>
                         </div>
                       ) : (
@@ -342,7 +342,7 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
 
         {/* Footer */}
         <div className="border-t border-neutral-100 bg-neutral-50 px-4 py-2.5 text-xs text-neutral-400">
-          {rows.length} hospitals · Patient cost = negotiated rate × coinsurance % (after deductible met) · Actual cost depends on your specific plan benefits
+          {rows.length} hospitals · "You pay" = what insurance agreed to pay × your share % (assumes deductible is already met) · Actual cost depends on your specific plan
         </div>
 
         {/* Transparency explainer */}
@@ -361,24 +361,24 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
             <div className="px-4 pb-4 space-y-3 text-xs text-neutral-600 bg-neutral-50 border-t border-neutral-100">
               <dl className="mt-3 space-y-2.5">
                 <div>
-                  <dt className="font-semibold text-neutral-800">Negotiated Rate</dt>
-                  <dd className="mt-0.5 text-neutral-500">The rate your insurer has contractually agreed to pay the hospital for this procedure. This is the total allowed amount — not what you pay out of pocket.</dd>
+                  <dt className="font-semibold text-neutral-800">What insurance pays the hospital</dt>
+                  <dd className="mt-0.5 text-neutral-500">The discounted price your insurance company has agreed to pay the hospital — much lower than what they initially charge. You don't pay this full amount yourself.</dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-neutral-800">You Pay</dt>
-                  <dd className="mt-0.5 text-neutral-500">Your estimated share of the negotiated rate based on your coinsurance percentage, <em>assuming your deductible has already been met</em>. Your actual cost may be higher if you haven&apos;t reached your deductible.</dd>
+                  <dt className="font-semibold text-neutral-800">You pay</dt>
+                  <dd className="mt-0.5 text-neutral-500">Your estimated portion of the bill based on your coinsurance (the % you owe after your deductible is met). If you haven't hit your deductible yet, your actual cost may be higher.</dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-neutral-800">Insurer Pays</dt>
-                  <dd className="mt-0.5 text-neutral-500">The portion of the negotiated rate your insurance company pays directly to the hospital after you&apos;ve met your deductible.</dd>
+                  <dt className="font-semibold text-neutral-800">Insurance picks up</dt>
+                  <dd className="mt-0.5 text-neutral-500">The amount your insurance company pays directly to the hospital — the rest of the bill after your share.</dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-neutral-800">Cash Price</dt>
-                  <dd className="mt-0.5 text-neutral-500">The hospital&apos;s self-pay or cash discount price — often lower than the negotiated insurance rate. This may be a better option if you&apos;re uninsured or have a high deductible.</dd>
+                  <dt className="font-semibold text-neutral-800">No insurance (cash price)</dt>
+                  <dd className="mt-0.5 text-neutral-500">What the hospital charges if you pay on your own, without using insurance. This can sometimes be cheaper than using a high-deductible plan.</dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-neutral-800">Data Source</dt>
-                  <dd className="mt-0.5 text-neutral-500">Prices are sourced from hospital machine-readable files (MRFs) required by the CMS Price Transparency Rule (effective January 2021). AI estimates are used when hospital data files are unavailable.</dd>
+                  <dt className="font-semibold text-neutral-800">Where does this data come from?</dt>
+                  <dd className="mt-0.5 text-neutral-500">Prices come from official price lists that hospitals are required by law to publish. We also use AI estimates when a hospital's file doesn't include a specific procedure.</dd>
                 </div>
               </dl>
             </div>

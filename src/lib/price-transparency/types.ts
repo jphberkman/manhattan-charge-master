@@ -15,7 +15,7 @@ export interface HospitalConfig {
   name: string;
   address: string;
   sourceFile: string; // local path or URL
-  format: "cms-json" | "nyu-csv";
+  format: "cms-json" | "nyu-csv" | "hhc-csv";
 }
 
 export interface PriceApiEntry {

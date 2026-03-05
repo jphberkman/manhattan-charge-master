@@ -25,6 +25,46 @@ export const MANHATTAN_HOSPITALS: HospitalConfig[] = [
       "https://standard-charges-prod.s3.amazonaws.com/pricing_files/133971298-1801992631_nyu-langone-tisch_standardcharges.csv",
     format: "nyu-csv",
   },
+  {
+    id: "nyu-orthopedic",
+    name: "NYU Langone Orthopedic Hospital",
+    address: "301 E 17th St, New York, NY 10003",
+    sourceFile:
+      "https://standard-charges-prod.s3.amazonaws.com/pricing_files/133971298-1669578324_nyu-langone-orthopedic-hospital_standardcharges.csv",
+    format: "nyu-csv",
+  },
+  {
+    id: "bellevue",
+    name: "Bellevue Hospital Center",
+    address: "462 1st Ave, New York, NY 10016",
+    sourceFile:
+      "https://hhinternet.blob.core.windows.net/machine-readable/132655001_Bellevue%20Hospital%20Center_standardcharges.csv",
+    format: "hhc-csv",
+  },
+  {
+    id: "harlem",
+    name: "Harlem Hospital Center",
+    address: "506 Lenox Ave, New York, NY 10037",
+    sourceFile:
+      "https://hhinternet.blob.core.windows.net/machine-readable/132655001_Harlem%20Hospital%20Center_standardcharges.csv",
+    format: "hhc-csv",
+  },
+  {
+    id: "metropolitan",
+    name: "Metropolitan Hospital Center",
+    address: "1901 1st Ave, New York, NY 10029",
+    sourceFile:
+      "https://hhinternet.blob.core.windows.net/machine-readable/132655001_Metropolitan%20Hospital%20Center_standardcharges.csv",
+    format: "hhc-csv",
+  },
+  {
+    id: "carter",
+    name: "Henry J. Carter Specialty Hospital",
+    address: "1752 Park Ave, New York, NY 10035",
+    sourceFile:
+      "https://hhinternet.blob.core.windows.net/machine-readable/132655001_Henry%20J.%20Carter%20Specialty%20Hospital_standardcharges.csv",
+    format: "hhc-csv",
+  },
 ];
 
 // CPT codes to extract (surgical procedures)

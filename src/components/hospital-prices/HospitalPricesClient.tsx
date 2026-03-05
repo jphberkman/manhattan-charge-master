@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { ChevronDown, ChevronUp, Search } from "lucide-react";
 import { InsuranceSelector, type InsuranceSelection } from "./InsuranceSelector";
 import { InsurancePriceTable } from "./InsurancePriceTable";
 import { ProcedureSearch } from "./ProcedureSearch";
 import { CompareDrawer } from "./CompareDrawer";
 import { AiProcedureSearch } from "./AiProcedureSearch";
-import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 import type { PriceApiEntry } from "@/lib/price-transparency/types";
 
 export interface Procedure {
@@ -33,6 +34,7 @@ export function HospitalPricesClient({ procedures }: Props) {
 
   const [compareMap, setCompareMap] = useState<Map<string, PriceApiEntry>>(new Map());
   const [showCompare, setShowCompare] = useState(false);
+  const [showBrowse, setShowBrowse] = useState(false);
 
   const fetchPrices = useCallback(async (procedure: Procedure, ins: InsuranceSelection | null) => {
     setLoading(true);
@@ -41,7 +43,6 @@ export function HospitalPricesClient({ procedures }: Props) {
     setCompareMap(new Map());
 
     try {
-      // Always fetch cash prices
       const cashParams = new URLSearchParams({ procedureId: procedure.id, payerType: "cash" });
       const cashRes = await fetch(`/api/prices?${cashParams}`);
       const cashData: PriceApiEntry[] = cashRes.ok ? await cashRes.json() : [];
@@ -49,7 +50,6 @@ export function HospitalPricesClient({ procedures }: Props) {
       let insData: PriceApiEntry[] = [];
 
       if (ins && ins.payerType !== "cash") {
-        // Fetch insurer-specific prices — try name match first
         const insParams = new URLSearchParams({
           procedureId: procedure.id,
           payerType: ins.payerType,
@@ -58,22 +58,14 @@ export function HospitalPricesClient({ procedures }: Props) {
         const insRes = await fetch(`/api/prices?${insParams}`);
         insData = insRes.ok ? await insRes.json() : [];
 
-        // Widen to payerType only if no name matches
         if (insData.length === 0) {
-          const broadParams = new URLSearchParams({
-            procedureId: procedure.id,
-            payerType: ins.payerType,
-          });
+          const broadParams = new URLSearchParams({ procedureId: procedure.id, payerType: ins.payerType });
           const broadRes = await fetch(`/api/prices?${broadParams}`);
           insData = broadRes.ok ? await broadRes.json() : [];
         }
 
-        // AI estimate fallback for insurance prices
         if (insData.length === 0) {
-          const estParams = new URLSearchParams({
-            procedureId: procedure.id,
-            payerType: ins.payerType,
-          });
+          const estParams = new URLSearchParams({ procedureId: procedure.id, payerType: ins.payerType });
           const estRes = await fetch(`/api/prices/estimate?${estParams}`);
           if (estRes.ok) {
             const est = await estRes.json();
@@ -84,13 +76,11 @@ export function HospitalPricesClient({ procedures }: Props) {
           }
         }
       } else if (!ins) {
-        // No insurance selected — fetch all negotiated rates as the reference price
         const allParams = new URLSearchParams({ procedureId: procedure.id, payerType: "commercial" });
         const allRes = await fetch(`/api/prices?${allParams}`);
         insData = allRes.ok ? await allRes.json() : [];
       }
 
-      // If no cash prices in DB, AI-estimate them too
       if (cashData.length === 0 && insData.length > 0) {
         const estCashParams = new URLSearchParams({ procedureId: procedure.id, payerType: "cash" });
         const estCashRes = await fetch(`/api/prices/estimate?${estCashParams}`);
@@ -133,78 +123,116 @@ export function HospitalPricesClient({ procedures }: Props) {
   const insuranceLabel = insurance ? insurance.displayLabel : "Negotiated";
 
   return (
-    <div className="space-y-6">
-      {/* Step 1 — Insurance */}
-      <InsuranceSelector value={insurance} onChange={handleInsuranceChange} />
+    <div className="space-y-5">
 
-      {/* Step 2 — Procedure search */}
-      <div className="rounded-xl border border-neutral-200 bg-white p-5 shadow-sm">
-        <div className="mb-4">
-          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Step 2</p>
-          <h2 className="text-base font-bold text-neutral-900">Find Your Procedure</h2>
+      {/* ── Step 1: Insurance ── */}
+      <StepCard step={1} title="Select Your Insurance" subtitle="Personalize pricing to your plan">
+        <InsuranceSelector value={insurance} onChange={handleInsuranceChange} />
+      </StepCard>
+
+      {/* ── Step 2: AI Search (primary) ── */}
+      <StepCard
+        step={2}
+        title="Describe Your Condition or Procedure"
+        subtitle="AI identifies what you need and breaks down every cost — surgeon fees, implants, hardware, and more"
+        highlight
+      >
+        <AiProcedureSearch insurance={insurance} />
+      </StepCard>
+
+      {/* ── Divider ── */}
+      <div className="relative py-2">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-neutral-200" />
         </div>
-        <ProcedureSearch
-          procedures={procedures}
-          selected={selected}
-          onSelect={handleProcedureSelect}
-        />
-        {procedures.length === 0 && (
-          <p className="mt-3 text-xs text-neutral-400">
-            No procedures loaded yet — upload price data or use the AI breakdown below.
-          </p>
-        )}
+        <div className="relative flex justify-center">
+          <span className="flex items-center gap-2 bg-slate-50 px-4 text-xs font-semibold uppercase tracking-widest text-neutral-400">
+            <Search className="size-3" /> or search by CPT code
+          </span>
+        </div>
       </div>
 
-      {/* Results */}
-      {selected && (
-        <div className="space-y-3">
-          {/* Summary bar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-3">
-            <div>
-              <p className="text-sm font-semibold text-neutral-900">
-                CPT&nbsp;{selected.cptCode}&ensp;—&ensp;{selected.name}
-              </p>
-              {selected.description && (
-                <p className="mt-0.5 text-xs text-neutral-500">{selected.description}</p>
-              )}
+      {/* ── Step 3: CPT browse (secondary, collapsible) ── */}
+      <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+        <button
+          onClick={() => setShowBrowse((v) => !v)}
+          className="flex w-full items-center justify-between gap-4 px-6 py-4 text-left transition-colors hover:bg-neutral-50"
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex size-7 shrink-0 items-center justify-center rounded-full border-2 border-neutral-300 text-xs font-bold text-neutral-400">
+              3
             </div>
-            <div className="flex items-center gap-2">
-              {insurance && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-                  🛡 {insurance.displayLabel}
-                </span>
-              )}
-              {isAiEstimate && (
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700">
-                  ⚠ AI Estimates
-                </span>
-              )}
+            <div>
+              <p className="text-sm font-bold text-neutral-800">Browse by Procedure Code</p>
+              <p className="text-xs text-neutral-400">
+                {procedures.length > 0
+                  ? `${procedures.length.toLocaleString()} procedures in database — compare real hospital prices side by side`
+                  : "Upload price data to enable CPT code search"}
+              </p>
             </div>
           </div>
+          {showBrowse
+            ? <ChevronUp className="size-4 shrink-0 text-neutral-400" />
+            : <ChevronDown className="size-4 shrink-0 text-neutral-400" />
+          }
+        </button>
 
-          {error && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
+        {showBrowse && (
+          <div className="border-t border-neutral-100 px-6 pb-6 pt-5 space-y-4">
+            <ProcedureSearch
+              procedures={procedures}
+              selected={selected}
+              onSelect={handleProcedureSelect}
+            />
 
-          <InsurancePriceTable
-            insurancePrices={insurancePrices}
-            cashPrices={cashPrices}
-            insuranceLabel={insuranceLabel}
-            loading={loading}
-          />
-        </div>
-      )}
+            {procedures.length === 0 && (
+              <p className="text-xs text-neutral-400">
+                No procedures loaded — upload a hospital price file or use the AI breakdown above.
+              </p>
+            )}
 
-      <Separator />
+            {selected && (
+              <div className="space-y-3">
+                {/* Selected procedure banner */}
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-neutral-900">
+                      CPT&nbsp;{selected.cptCode}&ensp;·&ensp;{selected.name}
+                    </p>
+                    {selected.description && (
+                      <p className="mt-0.5 text-xs text-neutral-500">{selected.description}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {insurance && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                        {insurance.displayLabel}
+                      </span>
+                    )}
+                    {isAiEstimate && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+                        AI Estimates
+                      </span>
+                    )}
+                  </div>
+                </div>
 
-      {/* AI full breakdown */}
-      <div>
-        <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-          AI Full Cost Breakdown
-        </p>
-        <AiProcedureSearch />
+                {error && (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {error}
+                  </div>
+                )}
+
+                <InsurancePriceTable
+                  insurancePrices={insurancePrices}
+                  cashPrices={cashPrices}
+                  insuranceLabel={insuranceLabel}
+                  loading={loading}
+                />
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <CompareDrawer
@@ -213,6 +241,51 @@ export function HospitalPricesClient({ procedures }: Props) {
         entries={compareEntries}
         procedureName={selected?.name ?? ""}
       />
+    </div>
+  );
+}
+
+// ── StepCard ─────────────────────────────────────────────────────────────────
+function StepCard({
+  step, title, subtitle, highlight = false, children,
+}: {
+  step: number;
+  title: string;
+  subtitle?: string;
+  highlight?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={cn(
+      "overflow-hidden rounded-2xl border shadow-sm",
+      highlight
+        ? "border-blue-200 bg-white ring-1 ring-blue-100"
+        : "border-neutral-200 bg-white"
+    )}>
+      <div className={cn(
+        "flex items-start gap-3 border-b px-6 py-4",
+        highlight ? "border-blue-100 bg-blue-50/50" : "border-neutral-100 bg-neutral-50/70"
+      )}>
+        <div className={cn(
+          "flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-bold",
+          highlight
+            ? "bg-blue-600 text-white shadow-sm"
+            : "border-2 border-neutral-300 text-neutral-500"
+        )}>
+          {step}
+        </div>
+        <div>
+          <p className={cn("text-sm font-bold", highlight ? "text-blue-900" : "text-neutral-800")}>
+            {title}
+          </p>
+          {subtitle && (
+            <p className={cn("mt-0.5 text-xs", highlight ? "text-blue-600" : "text-neutral-400")}>
+              {subtitle}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="px-6 py-5">{children}</div>
     </div>
   );
 }

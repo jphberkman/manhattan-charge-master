@@ -16,6 +16,7 @@ import {
 } from "./hospital-registry.js";
 import { parseCmsJsonStream } from "./parsers/parse-cms-json.js";
 import { parseNyuCsvStream } from "./parsers/parse-nyu-csv.js";
+import { parseHhcCsvStream } from "./parsers/parse-hhc-csv.js";
 import type { NormalizedPriceEntry } from "./types.js";
 
 const prisma = new PrismaClient();
@@ -62,8 +63,12 @@ async function seedHospital(
   if (config.format === "cms-json") {
     const stream = await openSource(config.sourceFile);
     await parseCmsJsonStream(stream, (e) => collected.push(e));
+  } else if (config.format === "hhc-csv") {
+    // NYC Health + Hospitals tall/long format
+    const stream = await openSource(config.sourceFile);
+    await parseHhcCsvStream(stream, (e) => collected.push(e));
   } else {
-    // Stream the CSV — file can exceed V8's string size limit (>512 MB)
+    // nyu-csv — wide format, stream to stay under V8 string size limit
     const stream = await openSource(config.sourceFile);
     await parseNyuCsvStream(stream, (e) => collected.push(e));
   }

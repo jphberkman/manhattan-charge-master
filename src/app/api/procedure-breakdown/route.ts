@@ -10,70 +10,127 @@ export interface BreakdownComponent {
   category: string;
   description: string;
   cptCode: string;
-  estimatedLow: number;
-  estimatedHigh: number;
+  hcpcsCode?: string;
+  chargemasterLow: number;
+  chargemasterHigh: number;
+  insuranceLow: number | null;
+  insuranceHigh: number | null;
+  cashLow: number;
+  cashHigh: number;
   notes: string;
+  hasRealData?: boolean;
+}
+
+export interface ConditionAnalysis {
+  originalQuery: string;
+  isConditionDescription: boolean;
+  identifiedProcedure: string;
+  reasoning: string;
+  alternatives?: string[];
 }
 
 export interface ProcedureBreakdown {
   procedureName: string;
   cptCode: string;
   description: string;
+  conditionAnalysis?: ConditionAnalysis;
   components: BreakdownComponent[];
-  totalEstimateLow: number;
-  totalEstimateHigh: number;
+  chargemasterTotalLow: number;
+  chargemasterTotalHigh: number;
+  insuranceTotalLow: number | null;
+  insuranceTotalHigh: number | null;
+  cashTotalLow: number;
+  cashTotalHigh: number;
+  coinsurance: number;
+  insurerName: string | null;
   assumptions: string;
   importantNotes: string[];
 }
 
 export async function POST(req: NextRequest) {
-  const { query } = await req.json();
+  const body = await req.json();
+  const { query, insurerName, payerType, coinsurance = 0.20 } = body as {
+    query: string;
+    insurerName?: string;
+    payerType?: string;
+    coinsurance?: number;
+  };
 
   if (!query?.trim()) {
     return NextResponse.json({ error: "Query is required" }, { status: 400 });
   }
 
-  // Check if we have any DB prices to enrich the response
   const dbProcedures = await prisma.procedure.findMany({
     select: { cptCode: true, name: true },
     take: 200,
   });
   const dbCptList = dbProcedures.map((p) => `${p.cptCode}: ${p.name}`).join("\n");
 
-  const systemPrompt = `You are a healthcare cost transparency expert specializing in Manhattan hospital pricing. You help patients understand the COMPLETE cost of medical procedures — not just the surgeon's fee, but every service, supply, and associated cost they will encounter.
+  const insurerContext = insurerName
+    ? `The patient has ${insurerName} insurance (${payerType ?? "commercial"}).`
+    : "No specific insurer selected — use typical commercial in-network estimates.";
 
-When given a procedure, you break it down into ALL billable components with realistic Manhattan market pricing.
+  const systemPrompt = `You are a healthcare cost transparency expert specializing in Manhattan hospital charge master pricing, surgical planning, and medical coding.
 
-${dbCptList ? `\nDatabase has prices for these CPT codes:\n${dbCptList}\n\nPrefer using these CPT codes when they match a component.` : ""}
+You help patients understand the COMPLETE cost of medical procedures — including every piece of hardware, implant, surgical supply, and billable service.
 
-Always respond with ONLY valid JSON — no markdown fences, no explanation.`;
+CRITICAL RULES:
+1. The user may describe a medical CONDITION (e.g., "non-union ankle fracture", "torn ACL", "gallstones") or a PROCEDURE directly. You must handle both.
+2. If they describe a condition, first identify the most appropriate surgical procedure, then provide a full breakdown.
+3. Always include a "Medical Devices & Implants" category for surgical procedures — list each implant, screw, plate, nail, anchor, graft, etc. individually with HCPCS codes where applicable.
+4. Provide THREE price tiers per component reflecting real Manhattan hospital market data:
+   - chargemaster: hospital gross/list price (typically 3-8x the insurance rate for implants, 2-4x for services)
+   - insurance: in-network negotiated rate
+   - cash: self-pay discount price (usually 10-40% above insurance rate)
+5. For implant/device items specifically, chargemaster prices can be $500–$25,000+ each.
+
+${dbCptList ? `\nDatabase CPT codes available (prefer these when they match):\n${dbCptList}` : ""}
+
+Respond with ONLY valid JSON — no markdown, no commentary.`;
 
   const userPrompt = `Patient query: "${query}"
+${insurerContext}
 
-Return a complete cost breakdown as JSON with this exact structure:
+Return a complete JSON breakdown:
 {
-  "procedureName": "Full official name of the procedure",
+  "procedureName": "Full official procedure name",
   "cptCode": "primary CPT code",
-  "description": "1-2 sentence plain-language description of what this procedure involves",
+  "description": "2-3 sentence plain-language description of what this procedure involves",
+  "conditionAnalysis": {
+    "originalQuery": "${query.replace(/"/g, "'")}",
+    "isConditionDescription": <true if user described a condition rather than a procedure name, false otherwise>,
+    "identifiedProcedure": "Procedure identified from their description",
+    "reasoning": "1-2 sentences explaining why this procedure is appropriate for their condition",
+    "alternatives": ["Alternative procedure 1 if applicable", "Alternative procedure 2"]
+  },
   "components": [
     {
       "id": "1",
-      "name": "Component name (e.g. Orthopedic Surgeon Fee)",
-      "category": "One of: Professional Services | Facility & OR | Anesthesia | Diagnostics & Imaging | Medications & Supplies | Rehabilitation | Follow-up Care",
-      "description": "What this charge covers",
+      "name": "Component name (be specific — e.g., 'Titanium Locking Compression Plate' not just 'Hardware')",
+      "category": "One of: Professional Services | Facility & OR | Anesthesia | Diagnostics & Imaging | Medical Devices & Implants | Medications & Consumables | Rehabilitation | Follow-up Care",
+      "description": "What this charge covers and why it's needed",
       "cptCode": "CPT code if applicable, else empty string",
-      "estimatedLow": <integer USD, Manhattan in-network commercial>,
-      "estimatedHigh": <integer USD, Manhattan in-network commercial>,
-      "notes": "Brief note about what affects this cost, or empty string"
+      "hcpcsCode": "HCPCS L/C code for devices if applicable, else empty string",
+      "chargemasterLow": <integer USD — hospital gross list price lower bound>,
+      "chargemasterHigh": <integer USD — hospital gross list price upper bound>,
+      "insuranceLow": <integer USD — in-network negotiated rate lower bound>,
+      "insuranceHigh": <integer USD — in-network negotiated rate upper bound>,
+      "cashLow": <integer USD — self-pay cash price lower bound>,
+      "cashHigh": <integer USD — self-pay cash price upper bound>,
+      "notes": "Key cost driver or important note, or empty string"
     }
   ],
-  "totalEstimateLow": <sum of all estimatedLow>,
-  "totalEstimateHigh": <sum of all estimatedHigh>,
-  "assumptions": "1-2 sentences about what these estimates assume (insurance type, in-network, etc.)",
-  "importantNotes": ["note 1", "note 2", "note 3"]
+  "chargemasterTotalLow": <sum of all chargemasterLow>,
+  "chargemasterTotalHigh": <sum of all chargemasterHigh>,
+  "insuranceTotalLow": <sum of all insuranceLow>,
+  "insuranceTotalHigh": <sum of all insuranceHigh>,
+  "cashTotalLow": <sum of all cashLow>,
+  "cashTotalHigh": <sum of all cashHigh>,
+  "assumptions": "What insurance type, network status, and clinical scenario these estimates assume",
+  "importantNotes": ["3-4 important notes about cost variability, deductibles, etc."]
 }
 
-Include ALL realistic billable components for Manhattan hospitals. Be thorough — include pre-op tests, imaging, anesthesia, facility fees, implants/supplies, medications, post-op care, and follow-up visits if applicable. Use realistic current Manhattan market rates.`;
+Be thorough. For a surgical case include ALL of: pre-op labs/imaging, anesthesia, OR facility fee, surgeon fee, all implants/hardware individually, medications/blood products, post-op recovery, physical therapy, and follow-up visits. Use realistic current Manhattan market rates.`;
 
   try {
     const text = await anthropicCall({
@@ -85,13 +142,11 @@ Include ALL realistic billable components for Manhattan hospitals. Be thorough �
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error("Could not parse AI response");
 
-    // Attempt to recover truncated JSON by closing open structures
     let jsonStr = match[0];
-    let breakdown: ProcedureBreakdown;
+    let breakdown: Omit<ProcedureBreakdown, "coinsurance" | "insurerName">;
     try {
       breakdown = JSON.parse(jsonStr);
     } catch {
-      // Close any unclosed arrays/objects caused by truncation
       const opens = (jsonStr.match(/[\[{]/g) ?? []).length;
       const closes = (jsonStr.match(/[\]}]/g) ?? []).length;
       let repair = jsonStr.trimEnd().replace(/,\s*$/, "");
@@ -100,7 +155,7 @@ Include ALL realistic billable components for Manhattan hospitals. Be thorough �
       breakdown = JSON.parse(repair);
     }
 
-    // Enrich components that have a matching CPT in the DB with real prices
+    // Enrich components with real DB prices where CPT matches
     const enrichedComponents = await Promise.all(
       breakdown.components.map(async (comp) => {
         if (!comp.cptCode) return comp;
@@ -108,36 +163,72 @@ Include ALL realistic billable components for Manhattan hospitals. Be thorough �
           where: { cptCode: comp.cptCode },
           include: {
             prices: {
-              orderBy: { priceInCents: "asc" },
-              take: 20,
               include: { hospital: { select: { name: true } } },
             },
           },
         });
         if (!procedure || procedure.prices.length === 0) return comp;
 
-        const usdPrices = procedure.prices.map((p) => p.priceInCents / 100);
-        const dbLow = Math.min(...usdPrices);
-        const dbHigh = Math.max(...usdPrices);
-        const cheapestHospital = procedure.prices[0].hospital.name;
+        const prices = procedure.prices;
+
+        const grossPrices = prices
+          .filter((p) => p.priceType === "gross")
+          .map((p) => p.priceInCents / 100);
+
+        const cashPrices = prices
+          .filter((p) => p.payerType === "cash")
+          .map((p) => p.priceInCents / 100);
+
+        const insPrices = prices
+          .filter((p) => {
+            if (payerType && p.payerType === payerType) return true;
+            if (!payerType && p.payerType === "commercial") return true;
+            return false;
+          })
+          .filter((p) => p.priceType === "negotiated" || p.priceType === "discounted")
+          .map((p) => p.priceInCents / 100);
+
+        const cheapest = [...prices].sort((a, b) => a.priceInCents - b.priceInCents)[0];
 
         return {
           ...comp,
-          estimatedLow: Math.round(dbLow),
-          estimatedHigh: Math.round(dbHigh),
+          ...(grossPrices.length > 0 && {
+            chargemasterLow: Math.round(Math.min(...grossPrices)),
+            chargemasterHigh: Math.round(Math.max(...grossPrices)),
+          }),
+          ...(insPrices.length > 0 && {
+            insuranceLow: Math.round(Math.min(...insPrices)),
+            insuranceHigh: Math.round(Math.max(...insPrices)),
+          }),
+          ...(cashPrices.length > 0 && {
+            cashLow: Math.round(Math.min(...cashPrices)),
+            cashHigh: Math.round(Math.max(...cashPrices)),
+          }),
           notes: comp.notes
-            ? `${comp.notes} Best price: ${cheapestHospital}.`
-            : `Based on real data. Best price: ${cheapestHospital}.`,
+            ? `${comp.notes} Best price: ${cheapest?.hospital.name}.`
+            : `Real charge master data available. Best price: ${cheapest?.hospital.name}.`,
           hasRealData: true,
         };
       })
     );
 
-    const enrichedBreakdown = {
+    const sumField = (field: keyof BreakdownComponent) =>
+      enrichedComponents.reduce((s, c) => {
+        const v = c[field];
+        return s + (typeof v === "number" ? v : 0);
+      }, 0);
+
+    const enrichedBreakdown: ProcedureBreakdown = {
       ...breakdown,
       components: enrichedComponents,
-      totalEstimateLow: enrichedComponents.reduce((s, c) => s + c.estimatedLow, 0),
-      totalEstimateHigh: enrichedComponents.reduce((s, c) => s + c.estimatedHigh, 0),
+      chargemasterTotalLow: sumField("chargemasterLow"),
+      chargemasterTotalHigh: sumField("chargemasterHigh"),
+      insuranceTotalLow: sumField("insuranceLow") || null,
+      insuranceTotalHigh: sumField("insuranceHigh") || null,
+      cashTotalLow: sumField("cashLow"),
+      cashTotalHigh: sumField("cashHigh"),
+      coinsurance,
+      insurerName: insurerName ?? null,
     };
 
     return NextResponse.json(enrichedBreakdown);
