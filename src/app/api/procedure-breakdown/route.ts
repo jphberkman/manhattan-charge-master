@@ -4,6 +4,10 @@ import { anthropicCall } from "@/lib/anthropic-fetch";
 
 export const dynamic = "force-dynamic";
 
+// In-memory cache: key → { data, timestamp }
+const breakdownCache = new Map<string, { data: ProcedureBreakdown; ts: number }>();
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
 export interface BreakdownComponent {
   id: string;
   name: string;
@@ -60,9 +64,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Query is required" }, { status: 400 });
   }
 
+  // Return cached result if available
+  const cacheKey = `${query.trim().toLowerCase()}|${insurerName ?? ""}|${payerType ?? ""}|${coinsurance}`;
+  const cached = breakdownCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return NextResponse.json(cached.data);
+  }
+
+  // Fetch only relevant CPT codes (top 20 fuzzy match) instead of all 200
+  const words = query.trim().split(/\s+/).slice(0, 3);
   const dbProcedures = await prisma.procedure.findMany({
+    where: {
+      OR: words.map((w) => ({ name: { contains: w, mode: "insensitive" as const } })),
+    },
     select: { cptCode: true, name: true },
-    take: 200,
+    take: 20,
   });
   const dbCptList = dbProcedures.map((p) => `${p.cptCode}: ${p.name}`).join("\n");
 
@@ -134,7 +150,8 @@ Be thorough. For a surgical case include ALL of: pre-op labs/imaging, anesthesia
 
   try {
     const text = await anthropicCall({
-      max_tokens: 4096,
+      max_tokens: 3000,
+      cacheSystemPrompt: true,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });
@@ -231,6 +248,7 @@ Be thorough. For a surgical case include ALL of: pre-op labs/imaging, anesthesia
       insurerName: insurerName ?? null,
     };
 
+    breakdownCache.set(cacheKey, { data: enrichedBreakdown, ts: Date.now() });
     return NextResponse.json(enrichedBreakdown);
   } catch (err) {
     console.error("Breakdown error:", err);

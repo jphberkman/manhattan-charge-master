@@ -5,6 +5,10 @@ import type { PriceApiEntry } from "@/lib/price-transparency/types";
 
 export const dynamic = "force-dynamic";
 
+// In-memory cache for AI estimates (same procedureId + payerType = same result)
+const estimateCache = new Map<string, { data: unknown[]; ts: number }>();
+const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
 const MANHATTAN_HOSPITALS = [
   { id: "est-nyu", name: "NYU Langone Medical Center", address: "550 1st Ave, New York, NY 10016" },
   { id: "est-nyp", name: "NewYork-Presbyterian Hospital", address: "525 E 68th St, New York, NY 10065" },
@@ -23,6 +27,12 @@ export async function GET(req: NextRequest) {
 
   if (!procedureId) {
     return NextResponse.json({ error: "procedureId is required" }, { status: 400 });
+  }
+
+  const cacheKey = `${procedureId}|${payerType}`;
+  const cached = estimateCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+    return NextResponse.json(cached.data);
   }
 
   const procedure = await prisma.procedure.findUnique({
@@ -91,6 +101,7 @@ Rules:
       })
       .sort((a, b) => a.priceUsd - b.priceUsd);
 
+    estimateCache.set(cacheKey, { data: entries, ts: Date.now() });
     return NextResponse.json(entries);
   } catch (err) {
     console.error("AI estimate error:", err);

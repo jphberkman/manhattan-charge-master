@@ -11,6 +11,8 @@ interface AnthropicMessage {
 interface AnthropicRequest {
   model?: string;
   max_tokens: number;
+  /** Pass true to enable prompt caching on the system prompt (saves ~90% on cached tokens). */
+  cacheSystemPrompt?: boolean;
   system?: string;
   messages: AnthropicMessage[];
 }
@@ -25,13 +27,14 @@ const MODEL_CASCADE = [
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 2000;
 
-async function callOnce(apiKey: string, body: object): Promise<Response> {
+async function callOnce(apiKey: string, body: object, useCaching: boolean): Promise<Response> {
   return fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
       "content-type": "application/json",
+      ...(useCaching && { "anthropic-beta": "prompt-caching-2024-07-31" }),
     },
     body: JSON.stringify(body),
   });
@@ -41,13 +44,21 @@ export async function anthropicCall(request: AnthropicRequest): Promise<string> 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
 
-  const modelsToTry = request.model ? [request.model] : MODEL_CASCADE;
+  const { cacheSystemPrompt, system, ...rest } = request;
+  const modelsToTry = rest.model ? [rest.model] : MODEL_CASCADE;
+
+  // Build system field: array with cache_control when caching is requested
+  const systemField = system
+    ? cacheSystemPrompt
+      ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+      : system
+    : undefined;
 
   for (const model of modelsToTry) {
-    const payload = { ...request, model };
+    const payload = { ...rest, model, ...(systemField !== undefined && { system: systemField }) };
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      const res = await callOnce(apiKey, payload);
+      const res = await callOnce(apiKey, payload, !!cacheSystemPrompt);
 
       if (res.ok) {
         const data = await res.json();
