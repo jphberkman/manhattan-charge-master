@@ -25,6 +25,6 @@ export default async function Home() {
     redirect(`/${newProject.id}`);
   }
 
-  // For anonymous users, show the main content without a project
-  return <MainContent user={user} />;
+  // For anonymous users, redirect to the hospital prices marketplace
+  redirect("/hospital-prices");
 }
