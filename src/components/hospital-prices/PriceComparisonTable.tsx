@@ -13,7 +13,7 @@ const fmt = new Intl.NumberFormat("en-US", {
 
 const PRICE_TYPE_BADGE: Record<string, string> = {
   gross: "bg-neutral-100 text-neutral-600",
-  negotiated: "bg-blue-50 text-blue-700",
+  negotiated: "bg-violet-50 text-violet-700",
   discounted: "bg-green-50 text-green-700",
   min: "bg-violet-50 text-violet-700",
   max: "bg-orange-50 text-orange-700",
@@ -147,7 +147,7 @@ export function PriceComparisonTable({
                   className={cn(
                     "border-b border-neutral-100 transition-colors hover:bg-neutral-50",
                     i === sorted.length - 1 && "border-b-0",
-                    isSelected && "bg-blue-50 hover:bg-blue-50"
+                    isSelected && "bg-violet-50 hover:bg-violet-50"
                   )}
                 >
                   {showCheckboxes && (
@@ -156,7 +156,7 @@ export function PriceComparisonTable({
                         type="checkbox"
                         checked={isSelected}
                         onChange={() => onToggleHospital?.(entry.hospital.id, entry)}
-                        className="size-4 cursor-pointer rounded border-neutral-300 accent-blue-600"
+                        className="size-4 cursor-pointer rounded border-neutral-300 accent-violet-600"
                       />
                     </td>
                   )}

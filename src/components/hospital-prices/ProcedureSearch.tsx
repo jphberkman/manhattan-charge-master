@@ -62,7 +62,7 @@ export function ProcedureSearch({ procedures, selected, onSelect }: Props) {
             className={cn(
               "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
               activeCategory === null
-                ? "border-blue-500 bg-blue-50 text-blue-700"
+                ? "border-violet-500 bg-violet-50 text-violet-700"
                 : "border-neutral-200 text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50"
             )}
           >
@@ -75,7 +75,7 @@ export function ProcedureSearch({ procedures, selected, onSelect }: Props) {
               className={cn(
                 "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                 activeCategory === cat
-                  ? "border-blue-500 bg-blue-50 text-blue-700"
+                  ? "border-violet-500 bg-violet-50 text-violet-700"
                   : "border-neutral-200 text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50"
               )}
             >

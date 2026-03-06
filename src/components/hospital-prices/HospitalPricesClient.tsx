@@ -1,11 +1,10 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { ChevronDown, ChevronUp, Search } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, ShieldCheck, X } from "lucide-react";
 import { InsuranceSelector, type InsuranceSelection } from "./InsuranceSelector";
 import { InsurancePriceTable } from "./InsurancePriceTable";
 import { ProcedureSearch } from "./ProcedureSearch";
-import { CompareDrawer } from "./CompareDrawer";
 import { AiProcedureSearch } from "./AiProcedureSearch";
 import { cn } from "@/lib/utils";
 import type { PriceApiEntry } from "@/lib/price-transparency/types";
@@ -24,6 +23,7 @@ interface Props {
 
 export function HospitalPricesClient({ procedures }: Props) {
   const [insurance, setInsurance] = useState<InsuranceSelection | null>(null);
+  const [showInsurancePicker, setShowInsurancePicker] = useState(false);
   const [selected, setSelected] = useState<Procedure | null>(null);
 
   const [insurancePrices, setInsurancePrices] = useState<PriceApiEntry[]>([]);
@@ -31,16 +31,12 @@ export function HospitalPricesClient({ procedures }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isAiEstimate, setIsAiEstimate] = useState(false);
-
-  const [compareMap, setCompareMap] = useState<Map<string, PriceApiEntry>>(new Map());
-  const [showCompare, setShowCompare] = useState(false);
-  const [showBrowse, setShowBrowse] = useState(false);
+  const [showCptBrowse, setShowCptBrowse] = useState(false);
 
   const fetchPrices = useCallback(async (procedure: Procedure, ins: InsuranceSelection | null) => {
     setLoading(true);
     setError(null);
     setIsAiEstimate(false);
-    setCompareMap(new Map());
 
     try {
       const cashParams = new URLSearchParams({ procedureId: procedure.id, payerType: "cash" });
@@ -50,11 +46,7 @@ export function HospitalPricesClient({ procedures }: Props) {
       let insData: PriceApiEntry[] = [];
 
       if (ins && ins.payerType !== "cash") {
-        const insParams = new URLSearchParams({
-          procedureId: procedure.id,
-          payerType: ins.payerType,
-          payerName: ins.insurer,
-        });
+        const insParams = new URLSearchParams({ procedureId: procedure.id, payerType: ins.payerType, payerName: ins.insurer });
         const insRes = await fetch(`/api/prices?${insParams}`);
         insData = insRes.ok ? await insRes.json() : [];
 
@@ -69,10 +61,7 @@ export function HospitalPricesClient({ procedures }: Props) {
           const estRes = await fetch(`/api/prices/estimate?${estParams}`);
           if (estRes.ok) {
             const est = await estRes.json();
-            if (Array.isArray(est) && est.length > 0) {
-              insData = est;
-              setIsAiEstimate(true);
-            }
+            if (Array.isArray(est) && est.length > 0) { insData = est; setIsAiEstimate(true); }
           }
         }
       } else if (!ins) {
@@ -82,8 +71,7 @@ export function HospitalPricesClient({ procedures }: Props) {
       }
 
       if (cashData.length === 0 && insData.length > 0) {
-        const estCashParams = new URLSearchParams({ procedureId: procedure.id, payerType: "cash" });
-        const estCashRes = await fetch(`/api/prices/estimate?${estCashParams}`);
+        const estCashRes = await fetch(`/api/prices/estimate?${new URLSearchParams({ procedureId: procedure.id, payerType: "cash" })}`);
         if (estCashRes.ok) {
           const est = await estCashRes.json();
           if (Array.isArray(est)) setCashPrices(est);
@@ -100,9 +88,15 @@ export function HospitalPricesClient({ procedures }: Props) {
     }
   }, []);
 
+  // Called for every change (including mid-selection) — keep panel open
   const handleInsuranceChange = (ins: InsuranceSelection | null) => {
     setInsurance(ins);
     if (selected) fetchPrices(selected, ins);
+  };
+
+  // Called only when the user has finished picking insurer + plan
+  const handleInsuranceDone = () => {
+    setShowInsurancePicker(false);
   };
 
   const handleProcedureSelect = (p: Procedure) => {
@@ -110,75 +104,77 @@ export function HospitalPricesClient({ procedures }: Props) {
     fetchPrices(p, insurance);
   };
 
-  const handleToggleHospital = useCallback((hospitalId: string, entry: PriceApiEntry) => {
-    setCompareMap((prev) => {
-      const next = new Map(prev);
-      if (next.has(hospitalId)) { next.delete(hospitalId); }
-      else if (next.size < 3) { next.set(hospitalId, entry); }
-      return next;
-    });
-  }, []);
-
-  const compareEntries = Array.from(compareMap.values()).sort((a, b) => a.priceUsd - b.priceUsd);
-  const insuranceLabel = insurance ? insurance.displayLabel : "Negotiated";
+  const insuranceLabel = insurance ? insurance.displayLabel : "Typical insurance";
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
 
-      {/* ── Step 1: Insurance ── */}
-      <StepCard step={1} title="Select Your Insurance" subtitle="Personalize pricing to your plan">
-        <InsuranceSelector value={insurance} onChange={handleInsuranceChange} />
-      </StepCard>
-
-      {/* ── Step 2: AI Search (primary) ── */}
-      <StepCard
-        step={2}
-        title="Describe Your Condition or Procedure"
-        subtitle="AI identifies what you need and breaks down every cost — surgeon fees, implants, hardware, and more"
-        highlight
-      >
-        <AiProcedureSearch insurance={insurance} />
-      </StepCard>
-
-      {/* ── Divider ── */}
-      <div className="relative py-2">
-        <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-neutral-200" />
-        </div>
-        <div className="relative flex justify-center">
-          <span className="flex items-center gap-2 bg-slate-50 px-4 text-xs font-semibold uppercase tracking-widest text-neutral-400">
-            <Search className="size-3" /> or search by CPT code
-          </span>
-        </div>
-      </div>
-
-      {/* ── Step 3: CPT browse (secondary, collapsible) ── */}
-      <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+      {/* ── Insurance bar ── */}
+      <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
         <button
-          onClick={() => setShowBrowse((v) => !v)}
-          className="flex w-full items-center justify-between gap-4 px-6 py-4 text-left transition-colors hover:bg-neutral-50"
+          onClick={() => setShowInsurancePicker((v) => !v)}
+          className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left hover:bg-neutral-50 transition-colors"
         >
           <div className="flex items-center gap-3">
-            <div className="flex size-7 shrink-0 items-center justify-center rounded-full border-2 border-neutral-300 text-xs font-bold text-neutral-400">
-              3
-            </div>
+            <ShieldCheck className={cn("size-5 shrink-0", insurance ? "text-violet-600" : "text-neutral-300")} />
             <div>
-              <p className="text-sm font-bold text-neutral-800">Browse by Procedure Code</p>
-              <p className="text-xs text-neutral-400">
-                {procedures.length > 0
-                  ? `${procedures.length.toLocaleString()} procedures in database — compare real hospital prices side by side`
-                  : "Upload price data to enable CPT code search"}
-              </p>
+              <p className="text-xs text-neutral-400 font-medium">Your insurance</p>
+              {insurance ? (
+                <p className="text-sm font-semibold text-violet-700">{insurance.displayLabel}</p>
+              ) : (
+                <p className="text-sm font-medium text-neutral-500">
+                  Tap to add your insurance — we&apos;ll show what you&apos;d actually pay
+                </p>
+              )}
             </div>
           </div>
-          {showBrowse
-            ? <ChevronUp className="size-4 shrink-0 text-neutral-400" />
-            : <ChevronDown className="size-4 shrink-0 text-neutral-400" />
+          <div className="flex items-center gap-2 shrink-0">
+            {insurance && (
+              <span
+                role="button"
+                onClick={(e) => { e.stopPropagation(); handleInsuranceChange(null); }}
+                className="flex items-center gap-1 rounded-full border border-neutral-200 px-2.5 py-0.5 text-xs text-neutral-400 hover:text-red-500 hover:border-red-200"
+              >
+                <X className="size-3" /> Remove
+              </span>
+            )}
+            {showInsurancePicker
+              ? <ChevronUp className="size-4 text-neutral-400" />
+              : <ChevronDown className="size-4 text-neutral-400" />
+            }
+          </div>
+        </button>
+
+        {showInsurancePicker && (
+          <div className="border-t border-neutral-100 px-5 pb-5 pt-4">
+            <InsuranceSelector value={insurance} onChange={handleInsuranceChange} onDone={handleInsuranceDone} />
+          </div>
+        )}
+      </div>
+
+      {/* ── Main search ── */}
+      <AiProcedureSearch insurance={insurance} />
+
+      {/* ── CPT code browse (for power users) ── */}
+      <div className="overflow-hidden rounded-2xl border border-neutral-100 bg-white">
+        <button
+          onClick={() => setShowCptBrowse((v) => !v)}
+          className="flex w-full items-center justify-between gap-4 px-5 py-3.5 text-left hover:bg-neutral-50 transition-colors"
+        >
+          <div className="flex items-center gap-2.5">
+            <Search className="size-4 text-neutral-300 shrink-0" />
+            <p className="text-sm text-neutral-400">
+              Know your procedure code? Browse by CPT code
+            </p>
+          </div>
+          {showCptBrowse
+            ? <ChevronUp className="size-4 shrink-0 text-neutral-300" />
+            : <ChevronDown className="size-4 shrink-0 text-neutral-300" />
           }
         </button>
 
-        {showBrowse && (
-          <div className="border-t border-neutral-100 px-6 pb-6 pt-5 space-y-4">
+        {showCptBrowse && (
+          <div className="border-t border-neutral-100 px-5 pb-5 pt-4 space-y-4">
             <ProcedureSearch
               procedures={procedures}
               selected={selected}
@@ -187,13 +183,12 @@ export function HospitalPricesClient({ procedures }: Props) {
 
             {procedures.length === 0 && (
               <p className="text-xs text-neutral-400">
-                No procedures loaded — upload a hospital price file or use the AI breakdown above.
+                No procedures loaded — upload a hospital price file or use the AI search above.
               </p>
             )}
 
             {selected && (
               <div className="space-y-3">
-                {/* Selected procedure banner */}
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">
                   <div>
                     <p className="text-sm font-semibold text-neutral-900">
@@ -205,7 +200,7 @@ export function HospitalPricesClient({ procedures }: Props) {
                   </div>
                   <div className="flex items-center gap-2">
                     {insurance && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
                         {insurance.displayLabel}
                       </span>
                     )}
@@ -234,58 +229,6 @@ export function HospitalPricesClient({ procedures }: Props) {
           </div>
         )}
       </div>
-
-      <CompareDrawer
-        open={showCompare}
-        onClose={() => setShowCompare(false)}
-        entries={compareEntries}
-        procedureName={selected?.name ?? ""}
-      />
-    </div>
-  );
-}
-
-// ── StepCard ─────────────────────────────────────────────────────────────────
-function StepCard({
-  step, title, subtitle, highlight = false, children,
-}: {
-  step: number;
-  title: string;
-  subtitle?: string;
-  highlight?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={cn(
-      "overflow-hidden rounded-2xl border shadow-sm",
-      highlight
-        ? "border-blue-200 bg-white ring-1 ring-blue-100"
-        : "border-neutral-200 bg-white"
-    )}>
-      <div className={cn(
-        "flex items-start gap-3 border-b px-6 py-4",
-        highlight ? "border-blue-100 bg-blue-50/50" : "border-neutral-100 bg-neutral-50/70"
-      )}>
-        <div className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-full text-xs font-bold",
-          highlight
-            ? "bg-blue-600 text-white shadow-sm"
-            : "border-2 border-neutral-300 text-neutral-500"
-        )}>
-          {step}
-        </div>
-        <div>
-          <p className={cn("text-sm font-bold", highlight ? "text-blue-900" : "text-neutral-800")}>
-            {title}
-          </p>
-          {subtitle && (
-            <p className={cn("mt-0.5 text-xs", highlight ? "text-blue-600" : "text-neutral-400")}>
-              {subtitle}
-            </p>
-          )}
-        </div>
-      </div>
-      <div className="px-6 py-5">{children}</div>
     </div>
   );
 }

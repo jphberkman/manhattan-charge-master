@@ -7,8 +7,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProcedureBreakdown, BreakdownComponent } from "@/app/api/procedure-breakdown/route";
+import type { HospitalComparisonEntry } from "@/app/api/hospitals/compare/route";
 import type { InsuranceSelection } from "./InsuranceSelector";
 import { HospitalCostComparison } from "./HospitalCostComparison";
+import { PhysicianRecommendations } from "./PhysicianRecommendation";
 
 export type { ProcedureBreakdown };
 
@@ -21,13 +23,13 @@ const fmtRange = (lo: number | null | undefined, hi: number | null | undefined) 
 
 // ── Category styles ───────────────────────────────────────────────────────────
 const CATEGORY_CONFIG: Record<string, { headerBg: string; text: string; dot: string; icon: string }> = {
-  "Professional Services":      { headerBg: "bg-blue-50",    text: "text-blue-700",   dot: "bg-blue-500",   icon: "👨‍⚕️" },
+  "Professional Services":      { headerBg: "bg-violet-50",  text: "text-violet-700",   dot: "bg-violet-500", icon: "👨‍⚕️" },
   "Facility & OR":              { headerBg: "bg-purple-50",  text: "text-purple-700", dot: "bg-purple-500", icon: "🏥" },
   "Anesthesia":                 { headerBg: "bg-indigo-50",  text: "text-indigo-700", dot: "bg-indigo-500", icon: "💉" },
   "Diagnostics & Imaging":      { headerBg: "bg-amber-50",   text: "text-amber-700",  dot: "bg-amber-500",  icon: "🔬" },
   "Medical Devices & Implants": { headerBg: "bg-slate-100",  text: "text-slate-700",  dot: "bg-slate-500",  icon: "🔩" },
   "Medications & Consumables":  { headerBg: "bg-green-50",   text: "text-green-700",  dot: "bg-green-500",  icon: "💊" },
-  "Rehabilitation":             { headerBg: "bg-teal-50",    text: "text-teal-700",   dot: "bg-teal-500",   icon: "🏋️" },
+  "Rehabilitation":             { headerBg: "bg-violet-50",  text: "text-violet-700", dot: "bg-violet-500", icon: "🏋️" },
   "Follow-up Care":             { headerBg: "bg-rose-50",    text: "text-rose-700",   dot: "bg-rose-500",   icon: "📅" },
 };
 const catCfg = (cat: string) => CATEGORY_CONFIG[cat] ?? { headerBg: "bg-neutral-50", text: "text-neutral-600", dot: "bg-neutral-400", icon: "📋" };
@@ -40,13 +42,11 @@ const LOADING_PHASES = [
   "Calculating what you'd actually pay…",
 ];
 
-// ── Coinsurance options ───────────────────────────────────────────────────────
+// ── Coinsurance options (simple 3-choice) ─────────────────────────────────────
 const COINSURANCE_OPTIONS = [
-  { label: "10%", value: 0.10 },
-  { label: "20%", value: 0.20 },
-  { label: "30%", value: 0.30 },
-  { label: "40%", value: 0.40 },
-  { label: "I pay it all", value: 1.0 },
+  { label: "Insurance covers most", sublabel: "~20% on me", value: 0.20 },
+  { label: "We split it",           sublabel: "~30% on me", value: 0.30 },
+  { label: "Paying myself",         sublabel: "100% on me", value: 1.0  },
 ];
 
 // ── Suggestions ───────────────────────────────────────────────────────────────
@@ -77,6 +77,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
   const [coinsurance, setCoinsurance] = useState(0.20);
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [hospitalPrices, setHospitalPrices] = useState<HospitalComparisonEntry[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const phaseTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
@@ -100,6 +101,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
     setBreakdown(null);
     setShowBreakdown(false);
     setExpandedIds(new Set());
+    setHospitalPrices([]);
     startPhases();
     try {
       const res = await fetch("/api/procedure-breakdown", {
@@ -153,12 +155,12 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
       <div className={cn(
         "flex items-center gap-3 rounded-2xl border-2 bg-white px-5 py-4 shadow-md transition-all",
         loading
-          ? "border-blue-400 ring-4 ring-blue-100"
-          : "border-neutral-200 focus-within:border-blue-400 focus-within:ring-4 focus-within:ring-blue-100 hover:border-blue-300"
+          ? "border-violet-400 ring-4 ring-violet-100"
+          : "border-gray-200 focus-within:border-violet-400 focus-within:ring-4 focus-within:ring-violet-100 hover:border-violet-300"
       )}>
         {loading
-          ? <Loader2 className="size-5 shrink-0 animate-spin text-blue-500" />
-          : <Search className="size-5 shrink-0 text-neutral-400" />
+          ? <Loader2 className="size-5 shrink-0 animate-spin text-violet-500" />
+          : <Search className="size-5 shrink-0 text-gray-400" />
         }
         <input
           ref={inputRef}
@@ -166,14 +168,14 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && submit(query)}
-          placeholder="Describe what you need — e.g. 'non-union ankle fracture surgery', 'knee replacement', 'colonoscopy'…"
+          placeholder="What do you need? e.g. 'knee replacement', 'gallbladder removal', 'colonoscopy'…"
           className="flex-1 bg-transparent text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none"
           disabled={loading}
         />
         <button
           onClick={() => submit(query)}
           disabled={loading || !query.trim()}
-          className="shrink-0 rounded-xl bg-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+          className="shrink-0 rounded-xl bg-violet-700 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {loading ? "Searching…" : "Compare Hospitals"}
         </button>
@@ -186,7 +188,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
             <button
               key={s.label}
               onClick={() => { setQuery(s.query); submit(s.query); }}
-              className="rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-600 shadow-sm transition-all hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+              className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-all hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
             >
               {s.label}
             </button>
@@ -211,7 +213,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
           </div>
           <div className="px-6 py-5 space-y-3">
             <div className="flex items-center gap-3 mb-4">
-              <Loader2 className="size-4 animate-spin text-blue-500 shrink-0" />
+              <Loader2 className="size-4 animate-spin text-violet-500 shrink-0" />
               <p className="text-sm font-medium text-neutral-700">{LOADING_PHASES[loadingPhase]}</p>
             </div>
             {/* Hospital skeleton rows */}
@@ -240,7 +242,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
           <div className={cn(
             "rounded-2xl border px-5 py-4",
             breakdown.conditionAnalysis?.isConditionDescription
-              ? "border-blue-200 bg-gradient-to-r from-blue-600 to-blue-700"
+              ? "border-violet-200 bg-gradient-to-r from-violet-700 to-indigo-700"
               : "border-neutral-200 bg-slate-800"
           )}>
             <div className="flex items-start gap-4 flex-wrap">
@@ -249,7 +251,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
               </div>
               <div className="flex-1 min-w-0">
                 {breakdown.conditionAnalysis?.isConditionDescription && (
-                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-200 mb-0.5">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-violet-200 mb-0.5">
                     Based on what you described, you likely need:
                   </p>
                 )}
@@ -280,29 +282,32 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
             </div>
           </div>
 
-          {/* ── Your share selector ── */}
+          {/* ── Your share selector — compact inline ── */}
           {showInsurance && (
-            <div className="flex flex-wrap items-center gap-3 rounded-xl border border-neutral-200 bg-white px-5 py-3 shadow-sm">
-              <div>
-                <p className="text-sm font-semibold text-neutral-800">What percentage does your insurance make you pay?</p>
-                <p className="text-xs text-neutral-400">This is your share after your deductible is met (called coinsurance)</p>
-              </div>
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">
+              <p className="text-xs font-medium text-neutral-500 shrink-0">How much does your plan cover?</p>
               <div className="flex flex-wrap gap-1.5 ml-auto">
                 {COINSURANCE_OPTIONS.map((opt) => (
                   <button
                     key={opt.label}
                     onClick={() => setCoinsurance(opt.value)}
                     className={cn(
-                      "rounded-full border px-3 py-1 text-xs font-semibold transition-all",
+                      "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all",
                       coinsurance === opt.value
-                        ? "border-blue-500 bg-blue-600 text-white shadow-sm"
-                        : "border-neutral-200 bg-white text-neutral-500 hover:border-neutral-300"
+                        ? "border-violet-500 bg-violet-600 text-white"
+                        : "border-neutral-200 bg-white text-neutral-600 hover:border-violet-300"
                     )}
                   >
                     {opt.label}
+                    <span className={cn("font-normal", coinsurance === opt.value ? "text-violet-200" : "text-neutral-400")}>
+                      {opt.sublabel}
+                    </span>
                   </button>
                 ))}
               </div>
+              <p className="w-full text-xs text-neutral-400 mt-0.5">
+                Not sure? Most employer plans are &ldquo;Insurance covers most.&rdquo; You can check your insurance card to confirm.
+              </p>
             </div>
           )}
 
@@ -313,8 +318,18 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
               procedureName={breakdown.procedureName}
               insurance={insurance ?? null}
               coinsurance={coinsurance}
+              onPricesLoaded={setHospitalPrices}
             />
           )}
+
+          {/* ── Physician recommendations ── */}
+          <PhysicianRecommendations
+            procedureName={breakdown.procedureName}
+            cptCode={breakdown.cptCode ?? null}
+            insurance={insurance ?? null}
+            coinsurance={coinsurance}
+            hospitalPrices={hospitalPrices}
+          />
 
           {/* ── Component breakdown (expandable) ── */}
           <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
@@ -325,9 +340,9 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
               <div className="flex items-center gap-3">
                 <ListCollapse className="size-4 text-neutral-400 shrink-0" />
                 <div>
-                  <p className="text-sm font-bold text-neutral-800">What does this procedure involve?</p>
+                  <p className="text-sm font-bold text-neutral-800">What&apos;s actually being billed?</p>
                   <p className="text-xs text-neutral-400 mt-0.5">
-                    See every charge broken down — surgeon fee, anesthesia, implants, medications, follow-up visits
+                    See every item on the bill — surgeon, anesthesia, implants, medications, follow-up visits
                   </p>
                 </div>
               </div>
@@ -344,10 +359,10 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                   className="grid items-center gap-0 border-b border-neutral-100 bg-neutral-50 px-6 py-2.5"
                   style={{ gridTemplateColumns: showInsurance ? "1fr 130px 130px 120px 120px" : "1fr 140px 140px" }}
                 >
-                  <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">Service / Item</span>
-                  <span className="text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">Hospital asks for</span>
-                  {showInsurance && <span className="text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">{insuranceLabel} pays hospital</span>}
-                  {showInsurance && <span className="text-right text-xs font-semibold uppercase tracking-wide text-blue-600">You pay</span>}
+                  <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">What&apos;s included</span>
+                  <span className="text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">List price</span>
+                  {showInsurance && <span className="text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">Insurance pays</span>}
+                  {showInsurance && <span className="text-right text-xs font-semibold uppercase tracking-wide text-violet-600">Your cost</span>}
                   <span className="text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">No insurance</span>
                 </div>
 
@@ -422,7 +437,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                                   {comp.cptCode && <span className="text-xs text-neutral-300">code {comp.cptCode}</span>}
                                 </div>
                                 <div className="text-right"><span className="font-mono text-sm text-neutral-500">{fmtRange(comp.chargemasterLow, comp.chargemasterHigh)}</span></div>
-                                {showInsurance && <div className="text-right"><span className="font-mono text-sm font-semibold text-blue-700">{fmtRange(comp.insuranceLow, comp.insuranceHigh)}</span></div>}
+                                {showInsurance && <div className="text-right"><span className="font-mono text-sm font-semibold text-violet-700">{fmtRange(comp.insuranceLow, comp.insuranceHigh)}</span></div>}
                                 {showInsurance && <div className="text-right"><span className="font-mono text-sm font-bold text-neutral-900">{fmtRange(yourLo, yourHi)}</span></div>}
                                 <div className="text-right"><span className="font-mono text-sm text-neutral-500">{fmtRange(comp.cashLow, comp.cashHigh)}</span></div>
                               </div>
@@ -450,18 +465,18 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                     <p className="text-xs text-neutral-400">All components</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs text-neutral-400 mb-0.5">Hospital asks for</p>
+                    <p className="text-xs text-neutral-400 mb-0.5">List price</p>
                     <p className="font-mono text-sm font-bold text-neutral-600">{fmtRange(breakdown.chargemasterTotalLow, breakdown.chargemasterTotalHigh)}</p>
                   </div>
                   {showInsurance && (
                     <div className="text-right">
-                      <p className="text-xs text-neutral-400 mb-0.5">Insurance pays hospital</p>
-                      <p className="font-mono text-sm font-bold text-blue-700">{breakdown.insuranceTotalLow != null ? fmtRange(breakdown.insuranceTotalLow, breakdown.insuranceTotalHigh) : "—"}</p>
+                      <p className="text-xs text-neutral-400 mb-0.5">Insurance pays</p>
+                      <p className="font-mono text-sm font-bold text-violet-700">{breakdown.insuranceTotalLow != null ? fmtRange(breakdown.insuranceTotalLow, breakdown.insuranceTotalHigh) : "—"}</p>
                     </div>
                   )}
                   {showInsurance && (
                     <div className="text-right">
-                      <p className="text-xs text-blue-600 font-semibold mb-0.5">You pay ({Math.round(coinsurance * 100)}%)</p>
+                      <p className="text-xs text-violet-600 font-semibold mb-0.5">Your estimated cost</p>
                       <p className="font-mono text-lg font-extrabold text-neutral-900">
                         {breakdown.insuranceTotalLow != null
                           ? fmtRange(Math.round(breakdown.insuranceTotalLow * coinsurance), Math.round((breakdown.insuranceTotalHigh ?? 0) * coinsurance))
@@ -471,24 +486,25 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                   )}
                   <div className="text-right">
                     <p className="text-xs text-neutral-400 mb-0.5">No insurance</p>
+
                     <p className="font-mono text-sm font-bold text-neutral-600">{fmtRange(breakdown.cashTotalLow, breakdown.cashTotalHigh)}</p>
                   </div>
                 </div>
 
                 {/* Insurer covers callout */}
                 {showInsurance && breakdown.insuranceTotalLow != null && coinsurance < 1 && (
-                  <div className="mx-6 mb-5 flex items-center justify-between gap-4 rounded-xl border border-blue-200 bg-blue-50 px-5 py-3">
+                  <div className="mx-6 mb-5 flex items-center justify-between gap-4 rounded-xl border border-violet-200 bg-violet-50 px-5 py-3">
                     <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Your insurance picks up</p>
-                      <p className="text-xl font-bold text-blue-800 mt-0.5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-violet-600">Your insurance picks up</p>
+                      <p className="text-xl font-bold text-violet-800 mt-0.5">
                         {fmtRange(
                           Math.round((breakdown.insuranceTotalLow ?? 0) * (1 - coinsurance)),
                           Math.round((breakdown.insuranceTotalHigh ?? 0) * (1 - coinsurance))
                         )}
                       </p>
                     </div>
-                    <p className="text-sm text-blue-600">
-                      {Math.round((1 - coinsurance) * 100)}% of your bill paid by insurance{breakdown.insurerName ? ` (${breakdown.insurerName})` : ""}
+                    <p className="text-sm text-violet-600">
+                      Your insurance covers {Math.round((1 - coinsurance) * 100)}% of the bill{breakdown.insurerName ? ` (${breakdown.insurerName})` : ""} — you pay the rest
                     </p>
                   </div>
                 )}
@@ -499,7 +515,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                     <p className="text-xs text-neutral-500 mb-2"><span className="font-semibold text-neutral-700">Assumptions: </span>{breakdown.assumptions}</p>
                   )}
                   <p className="text-xs text-neutral-400 italic">
-                    Prices are sourced from hospitals&apos; official price lists (required by federal law) and AI estimates where data isn&apos;t available. Items marked &quot;Real data&quot; use actual hospital records. Your actual bill may differ based on your specific plan, whether you&apos;ve met your deductible, and clinical details.
+                    Prices come from hospitals&apos; official published price lists and AI estimates. Items marked &quot;Real data&quot; use actual hospital records. Your final bill may be different depending on your specific plan, how much of your annual deductible you&apos;ve already paid, and the details of your care.
                   </p>
                 </div>
               </div>

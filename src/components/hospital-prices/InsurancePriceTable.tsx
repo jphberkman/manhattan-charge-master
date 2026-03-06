@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { TrendingDown, TrendingUp, Minus, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp } from "lucide-react";
+import { TrendingDown, TrendingUp, Minus, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PriceApiEntry } from "@/lib/price-transparency/types";
 
@@ -9,11 +9,11 @@ const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD",
 const fmtPct = (n: number) => `${n > 0 ? "+" : ""}${n.toFixed(0)}%`;
 
 const COINSURANCE_OPTIONS = [
-  { label: "10%", value: 0.10 },
-  { label: "20%", value: 0.20 },
-  { label: "30%", value: 0.30 },
-  { label: "40%", value: 0.40 },
-  { label: "No coverage", value: 1.0 },
+  { label: "Insurance pays almost everything", sublabel: "I pay ~10%", value: 0.10 },
+  { label: "Insurance pays most of it",        sublabel: "I pay ~20%", value: 0.20 },
+  { label: "We split it",                      sublabel: "I pay ~30%", value: 0.30 },
+  { label: "I pay a bigger share",             sublabel: "I pay ~40%", value: 0.40 },
+  { label: "I have no insurance / pay myself", sublabel: "I pay 100%", value: 1.0  },
 ];
 
 export interface HospitalPriceRow {
@@ -164,27 +164,27 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
       )}
 
       {/* Coinsurance selector */}
-      <div className="flex items-center gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-3">
-        <span className="text-xs font-medium text-neutral-600 shrink-0">Your share of the bill (coinsurance):</span>
+      <div className="rounded-lg border border-neutral-200 bg-white px-4 py-3 space-y-2">
+        <p className="text-xs font-semibold text-neutral-700">How does your insurance work? <span className="font-normal text-neutral-400">(pick the one that sounds like your plan)</span></p>
         <div className="flex flex-wrap gap-1.5">
           {COINSURANCE_OPTIONS.map((opt) => (
             <button
               key={opt.label}
               onClick={() => setCoinsurance(opt.value)}
               className={cn(
-                "rounded-full border px-3 py-0.5 text-xs font-medium transition-colors",
+                "rounded-full border px-3 py-1 text-xs font-medium transition-colors flex items-center gap-1.5",
                 coinsurance === opt.value
-                  ? "border-blue-500 bg-blue-50 text-blue-700"
+                  ? "border-violet-500 bg-violet-50 text-violet-700"
                   : "border-neutral-200 text-neutral-500 hover:border-neutral-300"
               )}
             >
               {opt.label}
+              <span className={cn("text-xs", coinsurance === opt.value ? "text-violet-400" : "text-neutral-300")}>
+                {opt.sublabel}
+              </span>
             </button>
           ))}
         </div>
-        <span className="ml-auto shrink-0 text-xs text-neutral-400">
-          Typical commercial: 20%
-        </span>
       </div>
 
       {/* Table */}
@@ -200,14 +200,14 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
                   {insuranceLabel} pays hospital <SortIcon col="negotiated" />
                 </Th>
                 <Th onClick={() => toggleSort("patientCost")} className="text-right">
-                  You pay ({Math.round(coinsurance * 100)}%) <SortIcon col="patientCost" />
+                  Your cost <SortIcon col="patientCost" />
                 </Th>
-                <Th className="text-right">Insurance picks up</Th>
+                <Th className="text-right">Insurance pays</Th>
                 <Th onClick={() => toggleSort("cash")} className="text-right">
                   No insurance (cash) <SortIcon col="cash" />
                 </Th>
-                <Th onClick={() => toggleSort("diff")} className="text-center">
-                  Better to use insurance? <SortIcon col="diff" />
+                <Th onClick={() => toggleSort("diff")} className="text-center text-green-700">
+                  Insurance saves <SortIcon col="diff" />
                 </Th>
               </tr>
             </thead>
@@ -218,22 +218,49 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
                 const isLast = i === sorted.length - 1;
                 const isBestValue = i === 0;
 
-                // Cash comparison badge
+                // Savings badge: positive pct = insurance is cheaper than cash
+                const insSavingsPct = patientCost != null && row.cash != null && row.cash > 0
+                  ? Math.round(((row.cash - patientCost) / row.cash) * 100)
+                  : null;
+
                 let diffBadge: React.ReactNode = null;
-                if (row.diff !== null && row.diffPct !== null) {
-                  const savings = -row.diff; // positive = cash saves money
+                if (insSavingsPct != null) {
+                  if (insSavingsPct > 0) {
+                    diffBadge = (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-bold text-green-700">
+                        <ShieldCheck className="size-3" />
+                        Save {insSavingsPct}% with insurance
+                      </span>
+                    );
+                  } else if (insSavingsPct < 0) {
+                    diffBadge = (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                        <TrendingDown className="size-3" />
+                        Cash is {Math.abs(insSavingsPct)}% cheaper
+                      </span>
+                    );
+                  } else {
+                    diffBadge = (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2.5 py-1 text-xs font-medium text-neutral-500">
+                        <Minus className="size-3" /> Same price
+                      </span>
+                    );
+                  }
+                } else if (row.diff !== null && row.diffPct !== null) {
+                  // fallback if patientCost not available but raw diff is
+                  const savings = -row.diff;
                   if (savings > 0) {
                     diffBadge = (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
                         <TrendingDown className="size-3" />
                         Cash saves {fmt.format(savings)} ({fmtPct(-row.diffPct)})
                       </span>
                     );
                   } else if (savings < 0) {
                     diffBadge = (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700">
-                        <TrendingUp className="size-3" />
-                        Cash costs {fmt.format(-savings)} more ({fmtPct(-row.diffPct)})
+                      <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-bold text-green-700">
+                        <ShieldCheck className="size-3" />
+                        Insurance saves {fmt.format(-savings)} ({fmtPct(-row.diffPct)})
                       </span>
                     );
                   } else {
@@ -268,7 +295,7 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
                           </div>
                           <p className="mt-0.5 text-xs text-neutral-400 truncate max-w-[200px]">{row.hospital.address}</p>
                           {row.negotiatedPayerName && (
-                            <p className="mt-0.5 text-xs text-blue-500">{row.negotiatedPayerName}</p>
+                            <p className="mt-0.5 text-xs text-violet-500">{row.negotiatedPayerName}</p>
                           )}
                         </div>
                       </div>
@@ -289,7 +316,7 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
                     <td className="px-4 py-3 text-right">
                       {patientCost !== null ? (
                         <div>
-                          <span className="font-mono font-bold text-blue-700">
+                          <span className="font-mono font-bold text-violet-700">
                             {fmt.format(patientCost)}
                           </span>
                           <p className="text-xs text-neutral-400">after deductible</p>
@@ -342,7 +369,7 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
 
         {/* Footer */}
         <div className="border-t border-neutral-100 bg-neutral-50 px-4 py-2.5 text-xs text-neutral-400">
-          {rows.length} hospitals · &quot;You pay&quot; = what insurance agreed to pay × your share % (assumes deductible is already met) · Actual cost depends on your specific plan
+          {rows.length} hospitals · &quot;Your cost&quot; = what you owe after insurance pays its share · Assumes you&apos;ve already paid your annual deductible · Your actual bill may vary
         </div>
 
         {/* Transparency explainer */}
@@ -351,7 +378,7 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
             onClick={() => setShowExplainer((v) => !v)}
             className="flex w-full items-center justify-between px-4 py-2.5 text-xs font-medium text-neutral-500 hover:text-neutral-700 transition-colors"
           >
-            <span>What do these prices mean?</span>
+            <span>What do these numbers mean? (plain language guide)</span>
             {showExplainer
               ? <ChevronUp className="size-3.5" />
               : <ChevronDown className="size-3.5" />
@@ -361,24 +388,28 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
             <div className="px-4 pb-4 space-y-3 text-xs text-neutral-600 bg-neutral-50 border-t border-neutral-100">
               <dl className="mt-3 space-y-2.5">
                 <div>
-                  <dt className="font-semibold text-neutral-800">What insurance pays the hospital</dt>
-                  <dd className="mt-0.5 text-neutral-500">The discounted price your insurance company has agreed to pay the hospital — much lower than what they initially charge. You don&apos;t pay this full amount yourself.</dd>
+                  <dt className="font-semibold text-neutral-800">Negotiated rate (what insurance pays the hospital)</dt>
+                  <dd className="mt-0.5 text-neutral-500">Hospitals have a secret deal with each insurance company. Instead of paying the full price, your insurer pays a much lower negotiated amount. This is that agreed-upon number — not what you personally pay.</dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-neutral-800">You pay</dt>
-                  <dd className="mt-0.5 text-neutral-500">Your estimated portion of the bill based on your coinsurance (the % you owe after your deductible is met). If you haven&apos;t hit your deductible yet, your actual cost may be higher.</dd>
+                  <dt className="font-semibold text-neutral-800">Your cost</dt>
+                  <dd className="mt-0.5 text-neutral-500">This is what you actually owe out of your own pocket. After your insurance pays its share, you cover the rest. This assumes you&apos;ve already met your deductible for the year — if you haven&apos;t, your cost may be higher.</dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-neutral-800">Insurance picks up</dt>
-                  <dd className="mt-0.5 text-neutral-500">The amount your insurance company pays directly to the hospital — the rest of the bill after your share.</dd>
+                  <dt className="font-semibold text-neutral-800">Insurance pays</dt>
+                  <dd className="mt-0.5 text-neutral-500">The portion your insurance company pays directly to the hospital on your behalf. You never see this money — it goes straight from insurer to hospital.</dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-neutral-800">No insurance (cash price)</dt>
-                  <dd className="mt-0.5 text-neutral-500">What the hospital charges if you pay on your own, without using insurance. This can sometimes be cheaper than using a high-deductible plan.</dd>
+                  <dt className="font-semibold text-neutral-800">Cash price (no insurance)</dt>
+                  <dd className="mt-0.5 text-neutral-500">What the hospital charges if you pay entirely on your own. Surprisingly, this is sometimes cheaper than using insurance — especially if you have a high deductible or your insurance doesn&apos;t cover the procedure well.</dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-neutral-800">Where does this data come from?</dt>
-                  <dd className="mt-0.5 text-neutral-500">Prices come from official price lists that hospitals are required by law to publish. We also use AI estimates when a hospital&apos;s file doesn&apos;t include a specific procedure.</dd>
+                  <dt className="font-semibold text-neutral-800">What is a deductible?</dt>
+                  <dd className="mt-0.5 text-neutral-500">A deductible is the amount you pay each year before your insurance kicks in. For example, with a $2,000 deductible, you pay the first $2,000 of medical bills yourself each year. After that, your insurance starts sharing the cost.</dd>
+                </div>
+                <div>
+                  <dt className="font-semibold text-neutral-800">Where do these prices come from?</dt>
+                  <dd className="mt-0.5 text-neutral-500">Hospitals are required by federal law to publish their prices online. We pull from those official files. When a hospital hasn&apos;t published a specific price, we use AI to estimate based on comparable data.</dd>
                 </div>
               </dl>
             </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Sparkles, Building2, Trophy } from "lucide-react";
+import { Loader2, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Sparkles, Building2, Trophy, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { HospitalComparisonEntry } from "@/app/api/hospitals/compare/route";
 import type { InsuranceSelection } from "./InsuranceSelector";
@@ -9,21 +9,20 @@ import type { InsuranceSelection } from "./InsuranceSelector";
 const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const fmtNull = (v: number | null) => (v == null ? "—" : fmt.format(v));
 
-type SortKey = "rank" | "patientCost" | "cash" | "insurance";
-type View = "insurance" | "cash";
+type SortKey = "rank" | "patientCost" | "cash" | "insurance" | "savings";
 
 interface Props {
   cptCode: string;
   procedureName: string;
   insurance: InsuranceSelection | null;
   coinsurance: number;
+  onPricesLoaded?: (entries: HospitalComparisonEntry[]) => void;
 }
 
-export function HospitalCostComparison({ cptCode, procedureName, insurance, coinsurance }: Props) {
+export function HospitalCostComparison({ cptCode, procedureName, insurance, coinsurance, onPricesLoaded }: Props) {
   const [entries, setEntries] = useState<HospitalComparisonEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<View>("insurance");
   const [sortKey, setSortKey] = useState<SortKey>("rank");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -38,31 +37,40 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
       setEntries(data);
+      onPricesLoaded?.(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load hospital prices");
     } finally {
       setLoading(false);
     }
-  }, [cptCode, coinsurance, insurance]);
+  }, [cptCode, coinsurance, insurance, onPricesLoaded]);
 
   useEffect(() => { load(); }, [load]);
 
   const showIns = !insurance || insurance.payerType !== "cash";
 
-  // Active sort value per row
+  // Per-entry savings % with insurance vs cash (positive = insurance is cheaper)
+  const savingsPct = (e: HospitalComparisonEntry): number | null => {
+    if (e.patientCost != null && e.cashPrice != null && e.cashPrice > 0) {
+      return Math.round(((e.cashPrice - e.patientCost) / e.cashPrice) * 100);
+    }
+    return null;
+  };
+
   const sortVal = (e: HospitalComparisonEntry) => {
     if (sortKey === "rank") return e.rank;
     if (sortKey === "patientCost") return e.patientCost ?? Infinity;
     if (sortKey === "cash") return e.cashPrice ?? Infinity;
     if (sortKey === "insurance") return e.insuranceRate ?? Infinity;
+    if (sortKey === "savings") { const pct = savingsPct(e); return pct != null ? -pct : Infinity; }
     return e.rank;
   };
+
   const sorted = [...entries].sort((a, b) => {
     const d = sortVal(a) - sortVal(b);
     return sortDir === "asc" ? d : -d;
   });
 
-  // Summary helpers
   const withIns  = entries.filter((e) => e.patientCost != null).sort((a, b) => (a.patientCost ?? 0) - (b.patientCost ?? 0));
   const withCash = entries.filter((e) => e.cashPrice != null).sort((a, b) => (a.cashPrice ?? 0) - (b.cashPrice ?? 0));
 
@@ -74,7 +82,6 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
   const insSavings  = cheapestIns && costliestIns  ? (costliestIns.patientCost  ?? 0) - (cheapestIns.patientCost  ?? 0) : 0;
   const cashSavings = cheapestCash && costliestCash ? (costliestCash.cashPrice   ?? 0) - (cheapestCash.cashPrice   ?? 0) : 0;
 
-  // Max values for proportional bars
   const maxPatient = Math.max(...entries.map((e) => e.patientCost ?? 0), 1);
   const maxCash    = Math.max(...entries.map((e) => e.cashPrice ?? 0), 1);
 
@@ -82,6 +89,8 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else { setSortKey(key); setSortDir("asc"); }
   };
+
+  const insuranceLabel = insurance?.displayLabel ?? "Insurance";
 
   return (
     <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
@@ -91,27 +100,18 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Compare hospitals
+              Hospital price comparison
             </p>
             <h3 className="mt-0.5 text-lg font-bold text-white">{procedureName}</h3>
             <p className="mt-0.5 text-sm text-slate-400">
-              Ranked from lowest to highest cost — pick the best hospital for you
+              Ranked cheapest to most expensive — with your insurance and without
             </p>
           </div>
           {showIns && !loading && entries.length > 0 && (
-            <div className="flex rounded-xl border border-white/20 bg-white/10 p-1 gap-1 shrink-0">
-              {(["insurance", "cash"] as View[]).map((v) => (
-                <button
-                  key={v}
-                  onClick={() => setView(v)}
-                  className={cn(
-                    "rounded-lg px-4 py-1.5 text-xs font-semibold transition-all",
-                    view === v ? "bg-white text-slate-900 shadow-sm" : "text-slate-300 hover:text-white"
-                  )}
-                >
-                  {v === "insurance" ? "With my insurance" : "Paying myself (cash)"}
-                </button>
-              ))}
+            <div className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 shrink-0">
+              <ShieldCheck className="size-4 text-violet-300" />
+              <span className="text-xs font-semibold text-white">{insuranceLabel}</span>
+              <span className="text-xs text-slate-400">· {Math.round(coinsurance * 100)}% coinsurance</span>
             </div>
           )}
         </div>
@@ -120,7 +120,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
       {/* ── Loading ── */}
       {loading && (
         <div className="flex items-center justify-center gap-3 py-10 text-sm text-neutral-400">
-          <Loader2 className="size-5 animate-spin text-blue-500" />
+          <Loader2 className="size-5 animate-spin text-violet-500" />
           Looking up prices at each hospital…
         </div>
       )}
@@ -134,22 +134,24 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
       {!loading && !error && entries.length > 0 && (
         <>
           {/* ── Savings banner ── */}
-          {((view === "insurance" && insSavings > 500) || (view === "cash" && cashSavings > 500)) && (
+          {showIns && insSavings > 500 && (
             <div className="border-b border-green-100 bg-green-50 px-6 py-3">
               <div className="flex items-center gap-3">
                 <TrendingDown className="size-5 text-green-600 shrink-0" />
                 <p className="text-sm text-green-800">
-                  {view === "insurance" ? (
-                    <>
-                      Choosing <strong>{cheapestIns?.hospital.name}</strong> over <strong>{costliestIns?.hospital.name}</strong> saves you{" "}
-                      <strong className="text-green-700 text-base">{fmt.format(insSavings)}</strong> out of pocket.
-                    </>
-                  ) : (
-                    <>
-                      Choosing <strong>{cheapestCash?.hospital.name}</strong> over <strong>{costliestCash?.hospital.name}</strong> saves you{" "}
-                      <strong className="text-green-700 text-base">{fmt.format(cashSavings)}</strong> paying cash.
-                    </>
-                  )}
+                  Choosing <strong>{cheapestIns?.hospital.name}</strong> over <strong>{costliestIns?.hospital.name}</strong> saves you{" "}
+                  <strong className="text-green-700 text-base">{fmt.format(insSavings)}</strong> out of pocket with your insurance.
+                </p>
+              </div>
+            </div>
+          )}
+          {!showIns && cashSavings > 500 && (
+            <div className="border-b border-green-100 bg-green-50 px-6 py-3">
+              <div className="flex items-center gap-3">
+                <TrendingDown className="size-5 text-green-600 shrink-0" />
+                <p className="text-sm text-green-800">
+                  Choosing <strong>{cheapestCash?.hospital.name}</strong> over <strong>{costliestCash?.hospital.name}</strong> saves you{" "}
+                  <strong className="text-green-700 text-base">{fmt.format(cashSavings)}</strong> paying cash.
                 </p>
               </div>
             </div>
@@ -159,20 +161,19 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
           {sorted.length >= 2 && (
             <div className="grid gap-3 border-b border-neutral-100 px-6 py-4 sm:grid-cols-3">
               {sorted.slice(0, 3).map((entry, i) => {
-                const primaryAmt = view === "insurance" ? entry.patientCost : entry.cashPrice;
                 const isWinner = i === 0;
-                const savingsVsWorst = view === "insurance"
-                  ? (costliestIns?.patientCost ?? 0) - (entry.patientCost ?? 0)
-                  : (costliestCash?.cashPrice ?? 0) - (entry.cashPrice ?? 0);
+                const isBestIns  = showIns && cheapestIns?.hospital.id === entry.hospital.id;
+                const isBestCash = cheapestCash?.hospital.id === entry.hospital.id;
+                const pct = savingsPct(entry);
+                const savingsVsWorstIns = (costliestIns?.patientCost ?? 0) - (entry.patientCost ?? 0);
+                const savingsVsWorstCash = (costliestCash?.cashPrice ?? 0) - (entry.cashPrice ?? 0);
 
                 return (
                   <div
                     key={entry.hospital.id}
                     className={cn(
                       "relative rounded-xl border p-4 transition-all",
-                      isWinner
-                        ? "border-green-300 bg-green-50 ring-1 ring-green-300"
-                        : "border-neutral-200 bg-neutral-50"
+                      isWinner ? "border-green-300 bg-green-50 ring-1 ring-green-300" : "border-neutral-200 bg-neutral-50"
                     )}
                   >
                     {isWinner && (
@@ -193,24 +194,50 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                     <p className="mt-2 text-xs font-semibold text-neutral-600 leading-tight line-clamp-2">
                       {entry.hospital.name}
                     </p>
-                    <p className={cn(
-                      "mt-1 font-bold",
-                      isWinner ? "text-2xl text-green-700" : "text-xl text-neutral-800"
-                    )}>
-                      {fmtNull(primaryAmt)}
-                    </p>
-                    <p className="text-xs text-neutral-400">
-                      {view === "insurance" ? `you pay (${Math.round(coinsurance * 100)}% of the bill)` : "no insurance"}
-                    </p>
-                    {savingsVsWorst > 100 && !isWinner && (
-                      <p className="mt-1 text-xs text-green-600 font-medium">
-                        Save {fmt.format(savingsVsWorst)} vs. most expensive
-                      </p>
+
+                    {showIns && entry.patientCost != null ? (
+                      <>
+                        <p className={cn("mt-1 font-bold", isWinner ? "text-2xl text-green-700" : "text-xl text-neutral-800")}>
+                          {fmt.format(entry.patientCost)}
+                        </p>
+                        <p className="text-xs text-neutral-400">your estimated cost after insurance pays</p>
+                        {entry.cashPrice != null && (
+                          <p className="mt-1 text-xs text-neutral-500">Without insurance: {fmt.format(entry.cashPrice)}</p>
+                        )}
+                        {pct != null && pct > 0 && (
+                          <p className="mt-1 text-xs font-bold text-green-600">
+                            Insurance saves you {pct}% vs cash
+                          </p>
+                        )}
+                        {pct != null && pct < 0 && (
+                          <p className="mt-1 text-xs font-semibold text-amber-600">
+                            Cash is {Math.abs(pct)}% cheaper here
+                          </p>
+                        )}
+                        {isWinner && savingsVsWorstIns > 100 && (
+                          <p className="mt-1 text-xs text-green-600 font-semibold">
+                            Save {fmt.format(savingsVsWorstIns)} vs. most expensive
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <p className={cn("mt-1 font-bold", isWinner ? "text-2xl text-green-700" : "text-xl text-neutral-800")}>
+                          {fmtNull(entry.cashPrice)}
+                        </p>
+                        <p className="text-xs text-neutral-400">paying without insurance</p>
+                        {isBestCash && savingsVsWorstCash > 100 && (
+                          <p className="mt-1 text-xs font-semibold text-green-600">
+                            Save {fmt.format(savingsVsWorstCash)} vs most expensive
+                          </p>
+                        )}
+                      </>
                     )}
-                    {isWinner && savingsVsWorst > 100 && (
-                      <p className="mt-1 text-xs text-green-600 font-semibold">
-                        Save {fmt.format(savingsVsWorst)} vs. most expensive
-                      </p>
+                    {showIns && !isWinner && isBestCash && (
+                      <div className="mt-1.5"><Badge color="blue">Cheapest cash</Badge></div>
+                    )}
+                    {showIns && isBestIns && !isWinner && (
+                      <div className="mt-1.5"><Badge color="green">Cheapest with insurance</Badge></div>
                     )}
                   </div>
                 );
@@ -227,27 +254,32 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                     # <SortIcon col="rank" s={sortKey} d={sortDir} />
                   </Th>
                   <Th>Hospital</Th>
+                  <Th onClick={() => toggleSort("cash")} className="text-right">
+                    No insurance <SortIcon col="cash" s={sortKey} d={sortDir} />
+                  </Th>
                   {showIns && (
                     <Th onClick={() => toggleSort("insurance")} className="text-right">
-                      {insurance ? insurance.displayLabel : "Insurance"} pays hospital <SortIcon col="insurance" s={sortKey} d={sortDir} />
+                      Hospital bill <SortIcon col="insurance" s={sortKey} d={sortDir} />
                     </Th>
                   )}
                   {showIns && (
-                    <Th onClick={() => toggleSort("patientCost")} className="text-right text-blue-600 font-bold">
-                      You pay ({Math.round(coinsurance * 100)}%) <SortIcon col="patientCost" s={sortKey} d={sortDir} />
+                    <Th onClick={() => toggleSort("patientCost")} className="text-right text-violet-600">
+                      Your cost <SortIcon col="patientCost" s={sortKey} d={sortDir} />
                     </Th>
                   )}
-                  {showIns && <Th className="text-right">Insurance picks up</Th>}
-                  <Th onClick={() => toggleSort("cash")} className="text-right">
-                    No insurance (cash) <SortIcon col="cash" s={sortKey} d={sortDir} />
-                  </Th>
+                  {showIns && (
+                    <Th onClick={() => toggleSort("savings")} className="text-center text-green-700">
+                      Insurance saves you <SortIcon col="savings" s={sortKey} d={sortDir} />
+                    </Th>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {sorted.map((entry, i) => {
                   const isBestIns  = showIns && cheapestIns?.hospital.id === entry.hospital.id;
                   const isBestCash = cheapestCash?.hospital.id === entry.hospital.id;
-                  const isHighlight = (view === "insurance" && isBestIns) || (view === "cash" && isBestCash);
+                  const isHighlight = showIns ? isBestIns : isBestCash;
+                  const pct = savingsPct(entry);
 
                   const patientBarPct = entry.patientCost != null ? Math.round((entry.patientCost / maxPatient) * 100) : 0;
                   const cashBarPct    = entry.cashPrice   != null ? Math.round((entry.cashPrice   / maxCash)    * 100) : 0;
@@ -278,16 +310,36 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                             <div className="flex flex-wrap items-center gap-1.5">
                               <span className="font-semibold text-neutral-900">{entry.hospital.name}</span>
                               {isBestIns && showIns && <Badge color="green">Cheapest with insurance</Badge>}
-                              {isBestCash && !showIns && <Badge color="green">Cheapest cash price</Badge>}
+                              {isBestCash && !showIns && <Badge color="green">Cheapest cash</Badge>}
                               {isBestCash && showIns && !isBestIns && <Badge color="blue">Cheapest cash</Badge>}
                               {entry.isAiEstimate && <Badge color="amber"><Sparkles className="size-2.5 mr-0.5" />Estimated</Badge>}
                             </div>
-                            <p className="mt-0.5 max-w-[220px] truncate text-xs text-neutral-400">{entry.hospital.address}</p>
+                            <p className="mt-0.5 max-w-[200px] truncate text-xs text-neutral-400">{entry.hospital.address}</p>
                           </div>
                         </div>
                       </td>
 
-                      {/* Insurance rate */}
+                      {/* Cash price */}
+                      <td className="px-4 py-3 text-right">
+                        <div>
+                          <span className={cn(
+                            "font-mono font-semibold",
+                            isBestCash && !showIns ? "text-green-700 text-base" : "text-neutral-700 text-sm"
+                          )}>
+                            {fmtNull(entry.cashPrice)}
+                          </span>
+                          {entry.cashPrice != null && (
+                            <div className="mt-1.5 h-1.5 w-20 ml-auto rounded-full bg-neutral-100">
+                              <div
+                                className={cn("h-1.5 rounded-full transition-all", isBestCash && !showIns ? "bg-green-400" : "bg-neutral-300")}
+                                style={{ width: `${cashBarPct}%` }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </td>
+
+                      {/* Negotiated rate */}
                       {showIns && (
                         <td className="px-4 py-3 text-right">
                           <span className="font-mono text-sm text-neutral-600">{fmtNull(entry.insuranceRate)}</span>
@@ -300,14 +352,14 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                           <div>
                             <span className={cn(
                               "font-mono font-bold",
-                              isBestIns ? "text-green-700 text-base" : "text-neutral-900 text-sm"
+                              isBestIns ? "text-green-700 text-base" : "text-violet-700 text-sm"
                             )}>
                               {fmtNull(entry.patientCost)}
                             </span>
                             {entry.patientCost != null && (
-                              <div className="mt-1.5 h-1.5 w-24 ml-auto rounded-full bg-neutral-100">
+                              <div className="mt-1.5 h-1.5 w-20 ml-auto rounded-full bg-neutral-100">
                                 <div
-                                  className={cn("h-1.5 rounded-full transition-all", isBestIns ? "bg-green-500" : "bg-blue-400")}
+                                  className={cn("h-1.5 rounded-full transition-all", isBestIns ? "bg-green-500" : "bg-violet-400")}
                                   style={{ width: `${patientBarPct}%` }}
                                 />
                               </div>
@@ -316,32 +368,27 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                         </td>
                       )}
 
-                      {/* Insurance covers */}
+                      {/* Insurance saves % */}
                       {showIns && (
-                        <td className="px-4 py-3 text-right">
-                          <span className="font-mono text-sm text-neutral-500">{fmtNull(entry.insurerPays)}</span>
+                        <td className="px-4 py-3 text-center">
+                          {pct != null ? (
+                            pct > 0 ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-bold text-green-700">
+                                <TrendingDown className="size-3" />
+                                Save {pct}%
+                              </span>
+                            ) : pct < 0 ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
+                                Cash {Math.abs(pct)}% cheaper
+                              </span>
+                            ) : (
+                              <span className="text-xs text-neutral-400">Same price</span>
+                            )
+                          ) : (
+                            <span className="text-xs text-neutral-300">—</span>
+                          )}
                         </td>
                       )}
-
-                      {/* Cash price */}
-                      <td className="px-4 py-3 text-right">
-                        <div>
-                          <span className={cn(
-                            "font-mono font-semibold",
-                            isBestCash ? "text-green-700 text-base" : "text-neutral-700 text-sm"
-                          )}>
-                            {fmtNull(entry.cashPrice)}
-                          </span>
-                          {entry.cashPrice != null && (
-                            <div className="mt-1.5 h-1.5 w-24 ml-auto rounded-full bg-neutral-100">
-                              <div
-                                className={cn("h-1.5 rounded-full transition-all", isBestCash ? "bg-green-500" : "bg-neutral-300")}
-                                style={{ width: `${cashBarPct}%` }}
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </td>
                     </tr>
                   );
                 })}
@@ -351,16 +398,17 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
 
           {/* Footer */}
           <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 text-xs text-neutral-400">
-            {entries.filter((e) => !e.isAiEstimate).length} hospitals with real price data ·{" "}
-            {entries.filter((e) => e.isAiEstimate).length} estimated ·
-            &quot;You pay&quot; = the price your insurance negotiated × your {Math.round(coinsurance * 100)}% share, once your deductible is met
+            {entries.filter((e) => !e.isAiEstimate).length} hospitals with real published prices ·{" "}
+            {entries.filter((e) => e.isAiEstimate).length} AI-estimated ·
+            &quot;Your cost&quot; = what you owe after your insurance pays its share ·
+            &quot;Insurance saves&quot; = how much less you pay vs paying the full cash price yourself
           </div>
         </>
       )}
 
       {!loading && !error && entries.length === 0 && (
         <p className="py-10 text-center text-sm text-neutral-400">
-          No hospital prices found for this procedure. Try the cash price view or search a different procedure.
+          No hospital prices found for this procedure. Try a different procedure.
         </p>
       )}
     </div>
@@ -373,7 +421,7 @@ function Badge({ color, children }: { color: "green" | "blue" | "amber"; childre
     <span className={cn(
       "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-semibold",
       color === "green" && "bg-green-100 text-green-700",
-      color === "blue"  && "bg-blue-100 text-blue-700",
+      color === "blue"  && "bg-violet-100 text-violet-700",
       color === "amber" && "bg-amber-100 text-amber-700",
     )}>
       {children}
