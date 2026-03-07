@@ -9,11 +9,6 @@ export const maxDuration = 120;
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-interface SheetData {
-  name: string;
-  rows: string[][];
-}
-
 interface ColumnMap {
   hospital_name: number | null;
   address: number | null;
@@ -26,128 +21,30 @@ interface ColumnMap {
   price_type: number | null;
 }
 
-interface WidePayerColumn {
-  colIndex: number;
-  payerName: string;
-  payerType: string;
-}
+interface WidePayerColumn { colIndex: number; payerName: string; payerType: string }
 
 interface FileSchema {
   format: "long" | "wide";
   bestSheet: string;
-  headerRow: number;        // 0-indexed row index of the header row
-  dataStartRow: number;     // 0-indexed row index where data begins
+  headerRow: number;
+  dataStartRow: number;
   hospitalSource: "column" | "filename";
   hospitalNameFromFilename: string | null;
   columns: ColumnMap;
-  widePayerColumns: WidePayerColumn[]; // only used when format === "wide"
+  widePayerColumns: WidePayerColumn[];
   notes: string;
 }
 
-// ---------------------------------------------------------------------------
-// Parse file → all sheets as { name, rows[][] }
-// ---------------------------------------------------------------------------
-function parseAllSheets(buffer: Buffer, filename: string): SheetData[] {
-  const ext = filename.split(".").pop()?.toLowerCase();
-
-  if (ext === "xlsx" || ext === "xls" || ext === "xlsm") {
-    const wb = XLSX.read(buffer, { type: "buffer" });
-    return wb.SheetNames.map((name) => {
-      const ws = wb.Sheets[name];
-      const raw: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-      const rows = raw
-        .map((r) => (r as unknown[]).map((c) => String(c ?? "").trim()))
-        .filter((r) => r.some((c) => c !== ""));
-      return { name, rows };
-    });
-  }
-
-  // CSV — single sheet
-  const text = buffer.toString("utf-8").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  const rows: string[][] = [];
-  for (const line of text.split("\n")) {
-    if (!line.trim()) continue;
-    const cols: string[] = [];
-    let cur = "";
-    let inQuote = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (ch === '"') {
-        if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
-        else inQuote = !inQuote;
-      } else if (ch === "," && !inQuote) {
-        cols.push(cur.trim()); cur = "";
-      } else {
-        cur += ch;
-      }
-    }
-    cols.push(cur.trim());
-    rows.push(cols);
-  }
-  return [{ name: "Sheet1", rows }];
-}
-
-// ---------------------------------------------------------------------------
-// Ask Claude to detect the file structure
-// ---------------------------------------------------------------------------
-async function detectSchema(sheets: SheetData[], filename: string): Promise<FileSchema> {
-  // Build a compact sample: first 20 non-empty rows of up to 3 sheets
-  const sample = sheets.slice(0, 3).map((s) => ({
-    sheet: s.name,
-    rows: s.rows.slice(0, 20),
-  }));
-
-  const prompt = `You are a data engineering expert specializing in hospital price transparency files.
-
-Analyze this spreadsheet and return a JSON schema so I can parse it correctly.
-
-Filename: "${filename}"
-Sheet data (first 20 rows per sheet):
-${JSON.stringify(sample, null, 2)}
-
-Common formats you may encounter:
-- "long": one row per price entry (most common). Each row has procedure + payer + price.
-- "wide": one row per procedure, multiple payer columns. Must be unpivoted.
-- Some files have title/logo rows before the header row.
-- Some files are per-hospital (no hospital column — name comes from filename).
-- CMS standard files often have columns like "description", "code | 1", "standard_charge | gross", "standard_charge | negotiated_dollar", etc.
-
-Return ONLY valid JSON matching this exact interface (no markdown, no explanation):
-{
-  "format": "long" | "wide",
-  "bestSheet": "<sheet name with pricing data>",
-  "headerRow": <0-indexed row number of the header row>,
-  "dataStartRow": <0-indexed row number where data begins>,
-  "hospitalSource": "column" | "filename",
-  "hospitalNameFromFilename": "<hospital name if inferred from filename, else null>",
-  "columns": {
-    "hospital_name": <column index or null>,
-    "address": <column index or null>,
-    "cpt_code": <column index or null>,
-    "procedure_name": <column index or null>,
-    "category": <column index or null>,
-    "payer_name": <column index or null>,
-    "payer_type": <column index or null>,
-    "price": <column index or null>,
-    "price_type": <column index or null>
-  },
-  "widePayerColumns": [
-    { "colIndex": <number>, "payerName": "<name>", "payerType": "cash|commercial|medicare|medicaid|other" }
-  ],
-  "notes": "<brief description of what you detected>"
-}
-
-For "wide" format: set widePayerColumns to every column that contains prices (each payer = one column).
-For "long" format: widePayerColumns should be [].
-If hospital name is not in any column but is obvious from the filename, set hospitalSource to "filename" and hospitalNameFromFilename to the inferred name.`;
-
-  const text = await anthropicCall({
-    max_tokens: 1024,
-    messages: [{ role: "user", content: prompt }],
-  });
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error("Could not parse AI schema response");
-  return JSON.parse(match[0]) as FileSchema;
+interface NormalizedRow {
+  hospitalName: string;
+  address: string;
+  cptCode: string;
+  procedureName: string;
+  category: string;
+  payerName: string;
+  payerType: string;
+  priceInCents: number;
+  priceType: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,89 +70,212 @@ function normalizePriceType(raw: string): string {
 }
 
 function parsePrice(raw: string): number {
-  const cleaned = raw.replace(/[$,\s]/g, "");
-  const val = parseFloat(cleaned);
+  const val = parseFloat(raw.replace(/[$,\s]/g, ""));
   return isNaN(val) ? 0 : Math.round(val * 100);
 }
 
-// ---------------------------------------------------------------------------
-// Convert schema + raw rows → normalized price records
-// ---------------------------------------------------------------------------
-interface NormalizedRow {
-  hospitalName: string;
-  address: string;
-  cptCode: string;
-  procedureName: string;
-  category: string;
-  payerName: string;
-  payerType: string;
-  priceInCents: number;
-  priceType: string;
+function parseCsvLine(line: string): string[] {
+  const cols: string[] = [];
+  let cur = "", inQuote = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQuote = !inQuote;
+    } else if (ch === "," && !inQuote) { cols.push(cur.trim()); cur = ""; }
+    else cur += ch;
+  }
+  cols.push(cur.trim());
+  return cols;
 }
 
-function extractRows(sheet: SheetData, schema: FileSchema, filename: string): NormalizedRow[] {
-  const { columns: c, format, dataStartRow, widePayerColumns } = schema;
-  const dataRows = sheet.rows.slice(dataStartRow);
-  const results: NormalizedRow[] = [];
-
-  const get = (row: string[], idx: number | null): string =>
-    idx !== null && idx >= 0 ? (row[idx] ?? "").trim() : "";
-
-  const fallbackHospital =
-    schema.hospitalSource === "filename" && schema.hospitalNameFromFilename
-      ? schema.hospitalNameFromFilename
-      : filename.replace(/\.[^.]+$/, "").replace(/[_\-]/g, " ");
-
-  for (const row of dataRows) {
-    if (row.every((cell) => cell === "")) continue;
-
-    const hospitalName = get(row, c.hospital_name) || fallbackHospital;
-    const address = get(row, c.address) || "Manhattan, NY";
-    const cptCode = get(row, c.cpt_code).replace(/\s/g, "");
-    const procedureName = get(row, c.procedure_name) || cptCode;
-    const category = get(row, c.category) || "General";
-
-    if (!cptCode && !procedureName) continue;
-
-    if (format === "wide") {
-      // Unpivot: one entry per payer column
-      for (const payerCol of widePayerColumns) {
-        const priceRaw = get(row, payerCol.colIndex);
-        const priceInCents = parsePrice(priceRaw);
-        if (priceInCents <= 0) continue;
-        results.push({
-          hospitalName,
-          address,
-          cptCode: cptCode || procedureName.slice(0, 10),
-          procedureName,
-          category,
-          payerName: payerCol.payerName,
-          payerType: normalizePayerType(payerCol.payerType || payerCol.payerName),
-          priceInCents,
-          priceType: normalizePriceType(payerCol.payerName),
-        });
+// ---------------------------------------------------------------------------
+// Stream lines from a ReadableStream — works for any file size
+// ---------------------------------------------------------------------------
+async function* streamLines(body: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        if (buffer.trim()) yield buffer;
+        break;
       }
-    } else {
-      // Long format: one entry per row
-      const priceRaw = get(row, c.price);
-      const priceInCents = parsePrice(priceRaw);
-      if (priceInCents <= 0) continue;
-      const payerNameRaw = get(row, c.payer_name) || "Standard";
-      results.push({
-        hospitalName,
-        address,
-        cptCode: cptCode || procedureName.slice(0, 10),
-        procedureName,
-        category,
-        payerName: payerNameRaw,
-        payerType: normalizePayerType(get(row, c.payer_type) || payerNameRaw),
-        priceInCents,
-        priceType: normalizePriceType(get(row, c.price_type)),
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.trim()) yield line;
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AI schema detection from a small sample of rows
+// ---------------------------------------------------------------------------
+async function detectSchemaFromSample(sampleRows: string[][], filename: string): Promise<FileSchema> {
+  const sample = [{ sheet: "Sheet1", rows: sampleRows.slice(0, 25) }];
+  const text = await anthropicCall({
+    max_tokens: 1024,
+    cacheSystemPrompt: true,
+    system: `You are a data engineering expert specializing in hospital price transparency files. Return ONLY valid JSON.`,
+    messages: [{ role: "user", content: `Analyze this hospital price file and return a JSON schema for parsing it.
+
+Filename: "${filename}"
+Sample rows (first 25):
+${JSON.stringify(sample, null, 2)}
+
+Common formats:
+- "long": one row per price entry (procedure + payer + price per row)
+- "wide": one row per procedure, multiple payer columns (must unpivot)
+- CMS standard columns: "description", "code | 1", "standard_charge | gross", "standard_charge | negotiated_dollar"
+
+Return ONLY this JSON (no markdown):
+{"format":"long"|"wide","bestSheet":"Sheet1","headerRow":<int>,"dataStartRow":<int>,"hospitalSource":"column"|"filename","hospitalNameFromFilename":<string|null>,"columns":{"hospital_name":<int|null>,"address":<int|null>,"cpt_code":<int|null>,"procedure_name":<int|null>,"category":<int|null>,"payer_name":<int|null>,"payer_type":<int|null>,"price":<int|null>,"price_type":<int|null>},"widePayerColumns":[{"colIndex":<int>,"payerName":"<str>","payerType":"cash|commercial|medicare|medicaid|other"}],"notes":"<str>"}` }],
+  });
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("Could not parse AI schema response");
+  return JSON.parse(match[0]) as FileSchema;
+}
+
+// ---------------------------------------------------------------------------
+// Apply schema to one row of CSV columns
+// ---------------------------------------------------------------------------
+function applySchema(cols: string[], schema: FileSchema, fallback: string): NormalizedRow[] {
+  const { columns: c, format, widePayerColumns } = schema;
+  const get = (idx: number | null) => idx !== null && idx >= 0 ? (cols[idx] ?? "").trim() : "";
+
+  const hospitalName = get(c.hospital_name) || fallback;
+  const address = get(c.address) || "Manhattan, NY";
+  const cptCode = get(c.cpt_code).replace(/\s/g, "");
+  const procedureName = get(c.procedure_name) || cptCode;
+  const category = get(c.category) || "General";
+
+  if (!cptCode && !procedureName) return [];
+
+  if (format === "wide") {
+    return widePayerColumns.flatMap((payerCol): NormalizedRow[] => {
+      const priceInCents = parsePrice(get(payerCol.colIndex));
+      if (priceInCents <= 0) return [];
+      return [{ hospitalName, address, cptCode: cptCode || procedureName.slice(0, 10), procedureName, category, payerName: payerCol.payerName, payerType: normalizePayerType(payerCol.payerType || payerCol.payerName), priceInCents, priceType: normalizePriceType(payerCol.payerName) }];
+    });
+  }
+
+  const priceInCents = parsePrice(get(c.price));
+  if (priceInCents <= 0) return [];
+  const payerNameRaw = get(c.payer_name) || "Standard";
+  return [{ hospitalName, address, cptCode: cptCode || procedureName.slice(0, 10), procedureName, category, payerName: payerNameRaw, payerType: normalizePayerType(get(c.payer_type) || payerNameRaw), priceInCents, priceType: normalizePriceType(get(c.price_type)) }];
+}
+
+// ---------------------------------------------------------------------------
+// Batch upsert to DB
+// ---------------------------------------------------------------------------
+async function flushBatch(
+  batch: NormalizedRow[],
+  sourceFile: string,
+  hospitalCache: Map<string, string>,
+  procedureCache: Map<string, string>
+): Promise<{ hospitalsUpserted: number; proceduresUpserted: number; pricesInserted: number }> {
+  let hospitalsUpserted = 0, proceduresUpserted = 0;
+
+  // Upsert hospitals and procedures first
+  for (const row of batch) {
+    const hKey = `${row.hospitalName}__${row.address}`;
+    if (!hospitalCache.has(hKey)) {
+      const h = await prisma.hospital.upsert({
+        where: { id: hKey },
+        create: { id: hKey, name: row.hospitalName, address: row.address, borough: "Manhattan", sourceFile, lastSeeded: new Date() },
+        update: { lastSeeded: new Date() },
+        select: { id: true },
       });
+      hospitalCache.set(hKey, h.id);
+      hospitalsUpserted++;
+    }
+    if (!procedureCache.has(row.cptCode)) {
+      const p = await prisma.procedure.upsert({
+        where: { cptCode: row.cptCode },
+        create: { cptCode: row.cptCode, name: row.procedureName, category: row.category, description: "" },
+        update: {},
+        select: { id: true },
+      });
+      procedureCache.set(row.cptCode, p.id);
+      proceduresUpserted++;
     }
   }
 
-  return results;
+  // Batch insert prices
+  await prisma.priceEntry.createMany({
+    data: batch.map((row) => ({
+      hospitalId: hospitalCache.get(`${row.hospitalName}__${row.address}`)!,
+      procedureId: procedureCache.get(row.cptCode)!,
+      payerName: row.payerName,
+      payerType: row.payerType,
+      priceInCents: row.priceInCents,
+      priceType: row.priceType,
+      rawCode: row.cptCode,
+    })),
+    skipDuplicates: true,
+  });
+
+  return { hospitalsUpserted, proceduresUpserted, pricesInserted: batch.length };
+}
+
+// ---------------------------------------------------------------------------
+// In-memory path for XLSX (must be < 200MB)
+// ---------------------------------------------------------------------------
+async function processXlsx(buffer: Buffer, filename: string) {
+  const wb = XLSX.read(buffer, { type: "buffer" });
+  const sheets = wb.SheetNames.map((name) => {
+    const raw: unknown[][] = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "" });
+    const rows = raw
+      .map((r) => (r as unknown[]).map((c) => String(c ?? "").trim()))
+      .filter((r) => r.some((c) => c !== ""));
+    return { name, rows };
+  });
+
+  if (sheets.length === 0 || sheets.every((s) => s.rows.length < 2)) {
+    throw new Error("File appears to be empty");
+  }
+
+  const sample = sheets.slice(0, 3).map((s) => ({ sheet: s.name, rows: s.rows.slice(0, 20) }));
+  const schemaText = await anthropicCall({
+    max_tokens: 1024,
+    messages: [{ role: "user", content: `Hospital price transparency Excel file. Filename: "${filename}". Sample: ${JSON.stringify(sample, null, 2)}\n\nReturn ONLY JSON schema:\n{"format":"long"|"wide","bestSheet":"<name>","headerRow":<int>,"dataStartRow":<int>,"hospitalSource":"column"|"filename","hospitalNameFromFilename":<string|null>,"columns":{"hospital_name":<int|null>,"address":<int|null>,"cpt_code":<int|null>,"procedure_name":<int|null>,"category":<int|null>,"payer_name":<int|null>,"payer_type":<int|null>,"price":<int|null>,"price_type":<int|null>},"widePayerColumns":[{"colIndex":<int>,"payerName":"<str>","payerType":"cash|commercial|medicare|medicaid|other"}],"notes":"<str>"}` }],
+  });
+  const match = schemaText.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("Could not parse AI schema response");
+  const schema = JSON.parse(match[0]) as FileSchema;
+
+  const targetSheet = sheets.find((s) => s.name === schema.bestSheet) ?? sheets[0];
+  const fallback = schema.hospitalSource === "filename" && schema.hospitalNameFromFilename
+    ? schema.hospitalNameFromFilename
+    : filename.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+
+  const allRows: NormalizedRow[] = [];
+  for (const cols of targetSheet.rows.slice(schema.dataStartRow)) {
+    if (cols.every((c) => c === "")) continue;
+    allRows.push(...applySchema(cols, schema, fallback));
+  }
+
+  if (allRows.length === 0) throw new Error("No valid price rows found after parsing.");
+
+  const hospitalCache = new Map<string, string>();
+  const procedureCache = new Map<string, string>();
+  let hospitalsUpserted = 0, proceduresUpserted = 0, pricesInserted = 0;
+
+  for (let i = 0; i < allRows.length; i += 500) {
+    const stats = await flushBatch(allRows.slice(i, i + 500), filename, hospitalCache, procedureCache);
+    hospitalsUpserted += stats.hospitalsUpserted;
+    proceduresUpserted += stats.proceduresUpserted;
+    pricesInserted += stats.pricesInserted;
+  }
+
+  return { hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: schema };
 }
 
 // ---------------------------------------------------------------------------
@@ -264,100 +284,79 @@ function extractRows(sheet: SheetData, schema: FileSchema, filename: string): No
 export async function POST(req: NextRequest) {
   try {
     const filename = req.headers.get("x-filename") ?? "upload.csv";
-    const arrayBuffer = await req.arrayBuffer();
-    if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-      return NextResponse.json({ error: "No file provided" }, { status: 400 });
-    }
-    const buffer = Buffer.from(arrayBuffer);
-    const f = { name: filename };
+    const ext = filename.split(".").pop()?.toLowerCase();
 
-    // 1. Parse all sheets
-    const sheets = parseAllSheets(buffer, f.name);
-    if (sheets.length === 0 || sheets.every((s) => s.rows.length < 2)) {
-      return NextResponse.json({ error: "File appears to be empty" }, { status: 400 });
-    }
+    if (!req.body) return NextResponse.json({ error: "No file provided" }, { status: 400 });
 
-    // 2. AI schema detection
-    const schema = await detectSchema(sheets, f.name);
-
-    // 3. Find the target sheet
-    const targetSheet =
-      sheets.find((s) => s.name === schema.bestSheet) ?? sheets[0];
-
-    // 4. Extract normalized rows
-    const normalizedRows = extractRows(targetSheet, schema, f.name);
-    if (normalizedRows.length === 0) {
-      return NextResponse.json({
-        error: "No valid price rows found after parsing.",
-        schemaDetected: schema,
-      }, { status: 400 });
+    // ── XLSX: load into memory (reject if > 200MB) ──────────────────────────
+    if (ext === "xlsx" || ext === "xls" || ext === "xlsm") {
+      const contentLength = parseInt(req.headers.get("content-length") ?? "0");
+      if (contentLength > 200 * 1024 * 1024) {
+        return NextResponse.json({
+          error: "Excel files over 200MB are not supported. Please save as CSV (.csv) and re-upload — CSV files of any size are supported.",
+        }, { status: 400 });
+      }
+      const buffer = Buffer.from(await req.arrayBuffer());
+      const result = await processXlsx(buffer, filename);
+      return NextResponse.json(result);
     }
 
-    // 5. Upsert to DB
-    let hospitalsUpserted = 0;
-    let proceduresUpserted = 0;
-    let pricesInserted = 0;
+    // ── CSV: fully streaming — works for any file size ──────────────────────
+    const fallback = filename.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
 
+    // Step 1: collect first 50 lines for AI schema detection
+    const sampleRows: string[][] = [];
+    const lineGen = streamLines(req.body);
+    for await (const line of lineGen) {
+      sampleRows.push(parseCsvLine(line));
+      if (sampleRows.length >= 50) break;
+    }
+
+    if (sampleRows.length < 2) return NextResponse.json({ error: "File appears to be empty" }, { status: 400 });
+
+    const schema = await detectSchemaFromSample(sampleRows, filename);
+
+    // Step 2: process all remaining lines in batches of 500
     const hospitalCache = new Map<string, string>();
     const procedureCache = new Map<string, string>();
+    let hospitalsUpserted = 0, proceduresUpserted = 0, pricesInserted = 0;
 
-    for (const row of normalizedRows) {
-      const hKey = `${row.hospitalName}__${row.address}`;
-
-      if (!hospitalCache.has(hKey)) {
-        const hospital = await prisma.hospital.upsert({
-          where: { id: hKey },
-          create: {
-            id: hKey,
-            name: row.hospitalName,
-            address: row.address,
-            borough: "Manhattan",
-            sourceFile: f.name,
-            lastSeeded: new Date(),
-          },
-          update: { lastSeeded: new Date() },
-          select: { id: true },
-        });
-        hospitalCache.set(hKey, hospital.id);
-        hospitalsUpserted++;
-      }
-
-      if (!procedureCache.has(row.cptCode)) {
-        const procedure = await prisma.procedure.upsert({
-          where: { cptCode: row.cptCode },
-          create: {
-            cptCode: row.cptCode,
-            name: row.procedureName,
-            category: row.category,
-            description: "",
-          },
-          update: {},
-          select: { id: true },
-        });
-        procedureCache.set(row.cptCode, procedure.id);
-        proceduresUpserted++;
-      }
-
-      await prisma.priceEntry.create({
-        data: {
-          hospitalId: hospitalCache.get(hKey)!,
-          procedureId: procedureCache.get(row.cptCode)!,
-          payerName: row.payerName,
-          payerType: row.payerType,
-          priceInCents: row.priceInCents,
-          priceType: row.priceType,
-          rawCode: row.cptCode,
-        },
-      });
-      pricesInserted++;
+    // First flush: rows from sample that are past dataStartRow
+    let batch: NormalizedRow[] = [];
+    for (const cols of sampleRows.slice(schema.dataStartRow)) {
+      if (cols.every((c) => c === "")) continue;
+      batch.push(...applySchema(cols, schema, fallback));
     }
 
-    return NextResponse.json({
-      hospitalsUpserted,
-      proceduresUpserted,
-      pricesInserted,
-      schemaDetected: schema,
-    });
+    // Continue streaming remaining lines
+    for await (const line of lineGen) {
+      const cols = parseCsvLine(line);
+      if (cols.every((c) => c === "")) continue;
+      batch.push(...applySchema(cols, schema, fallback));
+
+      if (batch.length >= 500) {
+        const stats = await flushBatch(batch, filename, hospitalCache, procedureCache);
+        hospitalsUpserted += stats.hospitalsUpserted;
+        proceduresUpserted += stats.proceduresUpserted;
+        pricesInserted += stats.pricesInserted;
+        batch = [];
+      }
+    }
+
+    // Final batch
+    if (batch.length > 0) {
+      const stats = await flushBatch(batch, filename, hospitalCache, procedureCache);
+      hospitalsUpserted += stats.hospitalsUpserted;
+      proceduresUpserted += stats.proceduresUpserted;
+      pricesInserted += stats.pricesInserted;
+    }
+
+    if (pricesInserted === 0) {
+      return NextResponse.json({ error: "No valid price rows found after parsing.", schemaDetected: schema }, { status: 400 });
+    }
+
+    return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: schema });
+
   } catch (err) {
     console.error("Upload error:", err);
     return NextResponse.json(
