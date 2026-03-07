@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as XLSX from "xlsx";
+import JSZip from "jszip";
 import { prisma } from "@/lib/prisma";
 import { anthropicCall } from "@/lib/anthropic-fetch";
 
@@ -375,6 +376,79 @@ export async function POST(req: NextRequest) {
 
     if (!req.body) return NextResponse.json({ error: "No file provided" }, { status: 400 });
 
+    // ── ZIP: extract and process each file inside ───────────────────────────
+    if (ext === "zip") {
+      const buffer = Buffer.from(await req.arrayBuffer());
+      const zip = await JSZip.loadAsync(buffer);
+      const entries = Object.values(zip.files).filter(
+        (e) => !e.dir && /\.(csv|xlsx|xls|xlsm|json)$/i.test(e.name)
+      );
+      if (entries.length === 0) return NextResponse.json({ error: "ZIP contains no CSV, Excel, or JSON files." }, { status: 400 });
+
+      let hospitalsUpserted = 0, proceduresUpserted = 0, pricesInserted = 0;
+      for (const entry of entries) {
+        const entryBuffer = Buffer.from(await entry.async("arraybuffer"));
+        const entryName = entry.name.split("/").pop()!;
+        // Re-invoke this endpoint logic by faking a new request isn't practical,
+        // so inline the XLSX/JSON/CSV handling per entry:
+        const entryExt = entryName.split(".").pop()?.toLowerCase();
+        if (entryExt === "xlsx" || entryExt === "xls" || entryExt === "xlsm") {
+          const result = await processXlsx(entryBuffer, entryName);
+          hospitalsUpserted += result.hospitalsUpserted;
+          proceduresUpserted += result.proceduresUpserted;
+          pricesInserted += result.pricesInserted;
+        } else if (entryExt === "json") {
+          const { Readable } = await import("stream");
+          const nodeStream = Readable.from([entryBuffer]);
+          const webStream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              nodeStream.on("data", (chunk) => controller.enqueue(chunk instanceof Buffer ? chunk : Buffer.from(chunk)));
+              nodeStream.on("end", () => controller.close());
+              nodeStream.on("error", (e) => controller.error(e));
+            },
+          });
+          const hCache = new Map<string, string>(), pCache = new Map<string, string>();
+          let batch: NormalizedRow[] = [];
+          const fallback = entryName.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+          let isCms = false, detectedFormat = false;
+          for await (const { obj, hospitalName } of streamJsonObjects(streamLines(webStream))) {
+            if (!detectedFormat) { isCms = "standard_charges" in obj || "codes" in obj; detectedFormat = true; }
+            batch.push(...(isCms ? cmsObjectToRows(obj, hospitalName || fallback) : flatJsonObjectToRows(obj, fallback)));
+            if (batch.length >= 5000) {
+              const s = await flushBatch(batch, entryName, hCache, pCache);
+              hospitalsUpserted += s.hospitalsUpserted; proceduresUpserted += s.proceduresUpserted; pricesInserted += s.pricesInserted;
+              batch = [];
+            }
+          }
+          if (batch.length > 0) {
+            const s = await flushBatch(batch, entryName, hCache, pCache);
+            hospitalsUpserted += s.hospitalsUpserted; proceduresUpserted += s.proceduresUpserted; pricesInserted += s.pricesInserted;
+          }
+        } else {
+          // CSV inside ZIP — parse in memory (ZIPs compress well so this is usually small)
+          const sheets = [{ name: "Sheet1", rows: entryBuffer.toString("utf-8").replace(/\r\n/g, "\n").split("\n").filter(Boolean).map(parseCsvLine) }];
+          const schema = await detectSchemaFromSample(sheets[0].rows.slice(0, 50), entryName);
+          const fallback = schema.hospitalNameFromFilename ?? entryName.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+          const hCache = new Map<string, string>(), pCache = new Map<string, string>();
+          let batch: NormalizedRow[] = [];
+          for (const cols of sheets[0].rows.slice(schema.dataStartRow)) {
+            if (cols.every((c) => c === "")) continue;
+            batch.push(...applySchema(cols, schema, fallback));
+            if (batch.length >= 5000) {
+              const s = await flushBatch(batch, entryName, hCache, pCache);
+              hospitalsUpserted += s.hospitalsUpserted; proceduresUpserted += s.proceduresUpserted; pricesInserted += s.pricesInserted;
+              batch = [];
+            }
+          }
+          if (batch.length > 0) {
+            const s = await flushBatch(batch, entryName, hCache, pCache);
+            hospitalsUpserted += s.hospitalsUpserted; proceduresUpserted += s.proceduresUpserted; pricesInserted += s.pricesInserted;
+          }
+        }
+      }
+      return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: { notes: `Processed ${entries.length} file(s) from ZIP` } });
+    }
+
     // ── JSON: fully streaming — works for any size ──────────────────────────
     if (ext === "json") {
       const fallback = filename.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
@@ -394,7 +468,7 @@ export async function POST(req: NextRequest) {
           : flatJsonObjectToRows(obj, fallback);
         batch.push(...rows);
 
-        if (batch.length >= 500) {
+        if (batch.length >= 5000) {
           const stats = await flushBatch(batch, filename, hospitalCache, procedureCache);
           hospitalsUpserted += stats.hospitalsUpserted;
           proceduresUpserted += stats.proceduresUpserted;
@@ -460,7 +534,7 @@ export async function POST(req: NextRequest) {
       if (cols.every((c) => c === "")) continue;
       batch.push(...applySchema(cols, schema, fallback));
 
-      if (batch.length >= 500) {
+      if (batch.length >= 5000) {
         const stats = await flushBatch(batch, filename, hospitalCache, procedureCache);
         hospitalsUpserted += stats.hospitalsUpserted;
         proceduresUpserted += stats.proceduresUpserted;
