@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { ChevronDown, ChevronUp, Search, ShieldCheck, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, ShieldCheck, X, Upload } from "lucide-react";
+import Link from "next/link";
 import { InsuranceSelector, type InsuranceSelection } from "./InsuranceSelector";
 import { InsurancePriceTable } from "./InsurancePriceTable";
 import { ProcedureSearch } from "./ProcedureSearch";
@@ -154,6 +155,24 @@ export function HospitalPricesClient({ procedures }: Props) {
 
       {/* ── Main search ── */}
       <AiProcedureSearch insurance={insurance} />
+
+      {/* ── Admin: upload / validate data ── */}
+      <div className="flex gap-2">
+        <Link
+          href="/hospital-prices/upload"
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm font-medium text-neutral-600 shadow-sm transition-colors hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
+        >
+          <Upload className="size-4 shrink-0" />
+          Upload price data
+        </Link>
+        <Link
+          href="/hospital-prices/validate"
+          className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-3 text-sm font-medium text-neutral-600 shadow-sm transition-colors hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
+        >
+          <span className="text-sm">📊</span>
+          Validate & improve AI
+        </Link>
+      </div>
 
       {/* ── CPT code browse (for power users) ── */}
       <div className="overflow-hidden rounded-2xl border border-neutral-100 bg-white">
