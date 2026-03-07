@@ -263,15 +263,13 @@ function extractRows(sheet: SheetData, schema: FileSchema, filename: string): No
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest) {
   try {
-    const formData = await req.formData();
-    const file = formData.get("file");
-
-    if (!file || typeof file === "string") {
+    const filename = req.headers.get("x-filename") ?? "upload.csv";
+    const arrayBuffer = await req.arrayBuffer();
+    if (!arrayBuffer || arrayBuffer.byteLength === 0) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
     }
-
-    const f = file as File;
-    const buffer = Buffer.from(await f.arrayBuffer());
+    const buffer = Buffer.from(arrayBuffer);
+    const f = { name: filename };
 
     // 1. Parse all sheets
     const sheets = parseAllSheets(buffer, f.name);

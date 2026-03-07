@@ -102,9 +102,11 @@ export default function UploadPage() {
     setStatus("uploading");
     setError(null);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        headers: { "x-filename": file.name, "content-type": "application/octet-stream" },
+        body: file,
+      });
       if (res.status === 413) throw new Error("File is too large for a single upload. Try splitting it into smaller files (e.g. one hospital at a time).");
       const text = await res.text();
       let json: any;

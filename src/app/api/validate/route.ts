@@ -315,20 +315,17 @@ async function validateSample(rows: NormalizedRow[]): Promise<ValidationSample[]
 
 export async function POST(req: NextRequest) {
   try {
-    const formData = await req.formData();
-    const file = formData.get("file");
-    if (!file || typeof file === "string") return NextResponse.json({ error: "No file provided" }, { status: 400 });
-
-    const f = file as File;
-    if (!/\.(csv|xlsx|xls|xlsm|json|zip)$/i.test(f.name)) {
+    const filename = req.headers.get("x-filename") ?? "upload.csv";
+    if (!/\.(csv|xlsx|xls|xlsm|json|zip)$/i.test(filename)) {
       return NextResponse.json({ error: "Unsupported file type. Upload CSV, Excel, JSON, or ZIP." }, { status: 400 });
     }
-
-    const buffer = Buffer.from(await f.arrayBuffer());
+    const arrayBuffer = await req.arrayBuffer();
+    if (!arrayBuffer || arrayBuffer.byteLength === 0) return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    const buffer = Buffer.from(arrayBuffer);
     let allRows: NormalizedRow[] = [];
     let filesProcessed = 0;
 
-    if (/\.zip$/i.test(f.name)) {
+    if (/\.zip$/i.test(filename)) {
       const zip = await JSZip.loadAsync(buffer);
       const entries = Object.values(zip.files).filter((e) => !e.dir && /\.(csv|xlsx|xls|xlsm|json)$/i.test(e.name));
       if (entries.length === 0) return NextResponse.json({ error: "ZIP contains no CSV, Excel, or JSON files." }, { status: 400 });
@@ -338,7 +335,7 @@ export async function POST(req: NextRequest) {
         filesProcessed++;
       }
     } else {
-      allRows = await parseFile(buffer, f.name);
+      allRows = await parseFile(buffer, filename);
       filesProcessed = 1;
     }
 
