@@ -45,7 +45,10 @@ export default function ValidatePage() {
       const fd = new FormData();
       fd.append("file", file);
       const res = await fetch("/api/validate", { method: "POST", body: fd });
-      const json = await res.json();
+      if (res.status === 413) throw new Error("File is too large for a single upload. Try splitting it into smaller files (e.g. one hospital at a time).");
+      const text = await res.text();
+      let json: any;
+      try { json = JSON.parse(text); } catch { throw new Error(`Server error: ${text.slice(0, 200)}`); }
       if (!res.ok) throw new Error(json.error ?? "Validation failed");
       setResult(json);
       setStatus("done");

@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { anthropicCall } from "@/lib/anthropic-fetch";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 // ---------------------------------------------------------------------------
 // Types
