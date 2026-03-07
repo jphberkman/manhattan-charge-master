@@ -226,6 +226,93 @@ async function flushBatch(
 }
 
 // ---------------------------------------------------------------------------
+// Streaming JSON — works for CMS 2.0 format and flat array format, any size
+// ---------------------------------------------------------------------------
+
+/** Yields complete top-level objects from a JSON array, line by line. */
+async function* streamJsonObjects(lines: AsyncGenerator<string>): AsyncGenerator<{ obj: Record<string, unknown>; hospitalName: string }> {
+  let inArray = false;
+  let depth = 0;
+  let currentLines: string[] = [];
+  let hospitalName = "";
+
+  for await (const line of lines) {
+    // Grab hospital_name from header before we reach the array
+    if (!hospitalName) {
+      const m = line.match(/"(?:hospital_name|name)"\s*:\s*"([^"]+)"/);
+      if (m) hospitalName = m[1];
+    }
+
+    if (!inArray) {
+      // CMS 2.0: array is under a key like "standard_charge_information"
+      // Flat format: top-level [
+      if (line.includes('"standard_charge_information"') || line.trim() === "[") {
+        if (line.includes("[")) inArray = true;
+      }
+      continue;
+    }
+
+    // Count brace depth to detect object boundaries
+    // Note: counts { and } outside of strings (simplified — works for typical hospital data)
+    let inStr = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"' && (i === 0 || line[i - 1] !== "\\")) inStr = !inStr;
+      if (!inStr) {
+        if (ch === "{") { if (depth === 0) currentLines = []; depth++; }
+        else if (ch === "}") depth--;
+      }
+    }
+
+    if (depth > 0 || currentLines.length > 0) currentLines.push(line);
+
+    if (depth === 0 && currentLines.length > 0) {
+      try {
+        const obj = JSON.parse(currentLines.join("\n"));
+        yield { obj, hospitalName };
+      } catch { /* skip malformed objects */ }
+      currentLines = [];
+    }
+  }
+}
+
+function cmsObjectToRows(obj: Record<string, unknown>, hospitalName: string): NormalizedRow[] {
+  const codes = (obj.codes as Array<{ code: string; type: string }>) ?? [];
+  const cptCode = codes.find((c) => c.type?.toUpperCase() === "CPT")?.code ?? "";
+  const procedureName = String(obj.description ?? cptCode);
+  if (!cptCode && !procedureName) return [];
+
+  const rows: NormalizedRow[] = [];
+  for (const charge of (obj.standard_charges as Record<string, unknown>[]) ?? []) {
+    if (charge.gross_charge) {
+      rows.push({ hospitalName, address: "Manhattan, NY", cptCode, procedureName, category: "General", payerName: "Gross", payerType: "gross", priceInCents: Math.round(Number(charge.gross_charge) * 100), priceType: "gross" });
+    }
+    if (charge.discounted_cash) {
+      rows.push({ hospitalName, address: "Manhattan, NY", cptCode, procedureName, category: "General", payerName: "Cash", payerType: "cash", priceInCents: Math.round(Number(charge.discounted_cash) * 100), priceType: "discounted" });
+    }
+    for (const payer of (charge.payers_information as Record<string, unknown>[]) ?? []) {
+      const price = payer.standard_charge_dollar ?? payer.negotiated_rate ?? payer.price;
+      if (!price) continue;
+      rows.push({ hospitalName, address: "Manhattan, NY", cptCode, procedureName, category: "General", payerName: String(payer.payer_name ?? "Unknown"), payerType: normalizePayerType(String(payer.payer_name ?? "")), priceInCents: Math.round(Number(price) * 100), priceType: normalizePriceType(String(payer.billing_class ?? "negotiated")) });
+    }
+  }
+  return rows.filter((r) => r.priceInCents > 0);
+}
+
+function flatJsonObjectToRows(obj: Record<string, unknown>, fallbackHospital: string): NormalizedRow[] {
+  // Generic flat object: try common field names
+  const cptCode = String(obj.cpt_code ?? obj.cptCode ?? obj.code ?? obj.procedure_code ?? "").replace(/\s/g, "");
+  const procedureName = String(obj.procedure_name ?? obj.description ?? obj.name ?? cptCode);
+  if (!cptCode && !procedureName) return [];
+  const priceRaw = String(obj.price ?? obj.standard_charge ?? obj.amount ?? obj.charge ?? "");
+  const priceInCents = parsePrice(priceRaw);
+  if (priceInCents <= 0) return [];
+  const hospitalName = String(obj.hospital_name ?? obj.hospital ?? fallbackHospital);
+  const payerRaw = String(obj.payer_name ?? obj.payer ?? obj.insurance ?? "Standard");
+  return [{ hospitalName, address: "Manhattan, NY", cptCode: cptCode || procedureName.slice(0, 10), procedureName, category: String(obj.category ?? "General"), payerName: payerRaw, payerType: normalizePayerType(String(obj.payer_type ?? payerRaw)), priceInCents, priceType: normalizePriceType(String(obj.price_type ?? obj.charge_type ?? "")) }];
+}
+
+// ---------------------------------------------------------------------------
 // In-memory path for XLSX (must be < 200MB)
 // ---------------------------------------------------------------------------
 async function processXlsx(buffer: Buffer, filename: string) {
@@ -287,6 +374,45 @@ export async function POST(req: NextRequest) {
     const ext = filename.split(".").pop()?.toLowerCase();
 
     if (!req.body) return NextResponse.json({ error: "No file provided" }, { status: 400 });
+
+    // ── JSON: fully streaming — works for any size ──────────────────────────
+    if (ext === "json") {
+      const fallback = filename.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
+      const hospitalCache = new Map<string, string>();
+      const procedureCache = new Map<string, string>();
+      let hospitalsUpserted = 0, proceduresUpserted = 0, pricesInserted = 0;
+      let isCms = false, detectedFormat = false;
+      let batch: NormalizedRow[] = [];
+
+      for await (const { obj, hospitalName } of streamJsonObjects(streamLines(req.body))) {
+        if (!detectedFormat) {
+          isCms = "standard_charges" in obj || "codes" in obj;
+          detectedFormat = true;
+        }
+        const rows = isCms
+          ? cmsObjectToRows(obj, hospitalName || fallback)
+          : flatJsonObjectToRows(obj, fallback);
+        batch.push(...rows);
+
+        if (batch.length >= 500) {
+          const stats = await flushBatch(batch, filename, hospitalCache, procedureCache);
+          hospitalsUpserted += stats.hospitalsUpserted;
+          proceduresUpserted += stats.proceduresUpserted;
+          pricesInserted += stats.pricesInserted;
+          batch = [];
+        }
+      }
+
+      if (batch.length > 0) {
+        const stats = await flushBatch(batch, filename, hospitalCache, procedureCache);
+        hospitalsUpserted += stats.hospitalsUpserted;
+        proceduresUpserted += stats.proceduresUpserted;
+        pricesInserted += stats.pricesInserted;
+      }
+
+      if (pricesInserted === 0) return NextResponse.json({ error: "No valid price rows found in JSON file." }, { status: 400 });
+      return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: { notes: isCms ? "CMS 2.0 standard format detected" : "Flat array format detected" } });
+    }
 
     // ── XLSX: load into memory (reject if > 200MB) ──────────────────────────
     if (ext === "xlsx" || ext === "xls" || ext === "xlsm") {
