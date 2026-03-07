@@ -150,7 +150,7 @@ Be thorough. For a surgical case include ALL of: pre-op labs/imaging, anesthesia
 
   try {
     const text = await anthropicCall({
-      max_tokens: 3000,
+      max_tokens: 4096,
       cacheSystemPrompt: true,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
