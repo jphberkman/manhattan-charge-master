@@ -2,6 +2,8 @@ import { prisma } from "@/lib/prisma";
 import { HospitalPricesClient } from "@/components/hospital-prices/HospitalPricesClient";
 import { Search, TrendingDown, ShieldCheck, Activity, Lock } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+
 export const metadata = {
   title: "Manhattan Medical Marketplace",
   description:
