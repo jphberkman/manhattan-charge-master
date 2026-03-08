@@ -2,195 +2,107 @@
 
 import { useState, useRef, useCallback } from "react";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
+import { Loader2, CheckCircle, XCircle, AlertCircle } from "lucide-react";
+import { cn } from "@/lib/utils";
 
-type UploadStatus = "idle" | "parsing" | "uploading" | "done" | "error";
+type FileStatus = "pending" | "uploading" | "done" | "error";
 
-interface SchemaDetected {
-  format: string;
-  bestSheet: string;
-  headerRow: number;
-  hospitalSource: string;
-  hospitalNameFromFilename: string | null;
-  notes: string;
+interface FileItem {
+  id: string;
+  file: File;
+  status: FileStatus;
+  error?: string;
+  result?: { hospitalsUpserted: number; proceduresUpserted: number; pricesInserted: number };
 }
-
-interface UploadResult {
-  hospitalsUpserted: number;
-  proceduresUpserted: number;
-  pricesInserted: number;
-  schemaDetected?: SchemaDetected;
-}
-
-const STATUS_MESSAGES: Record<string, string> = {
-  uploading: "Analyzing file structure with AI…",
-  done: "Import complete",
-};
 
 export default function UploadPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<string[][]>([]);
-  const [headers, setHeaders] = useState<string[]>([]);
-  const [status, setStatus] = useState<UploadStatus>("idle");
-  const [result, setResult] = useState<UploadResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [queue, setQueue] = useState<FileItem[]>([]);
   const [dragOver, setDragOver] = useState(false);
+  const [running, setRunning] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const isXlsx = (f: File) => /\.(xlsx|xls|xlsm)$/i.test(f.name);
-
-  const parsePreview = useCallback((text: string) => {
-    const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").filter(Boolean);
-    if (lines.length === 0) return;
-    const parseRow = (line: string): string[] => {
-      const cols: string[] = [];
-      let cur = "";
-      let inQuote = false;
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
-        if (ch === '"') {
-          if (inQuote && line[i + 1] === '"') { cur += '"'; i++; }
-          else inQuote = !inQuote;
-        } else if (ch === "," && !inQuote) {
-          cols.push(cur.trim()); cur = "";
-        } else cur += ch;
-      }
-      cols.push(cur.trim());
-      return cols;
-    };
-    setHeaders(parseRow(lines[0]));
-    setPreview(lines.slice(1, 4).map(parseRow));
+  const addFiles = useCallback((files: FileList | File[]) => {
+    const valid: FileItem[] = [];
+    for (const file of Array.from(files)) {
+      if (!/\.(csv|xlsx|xls|xlsm|json|zip)$/i.test(file.name)) continue;
+      valid.push({ id: `${file.name}-${Date.now()}-${Math.random()}`, file, status: "pending" });
+    }
+    setQueue((q) => [...q, ...valid]);
   }, []);
-
-  const handleFile = useCallback(
-    (f: File) => {
-      if (!/\.(csv|xlsx|xls|xlsm)$/i.test(f.name)) {
-        setError("Please upload a CSV or Excel (.xlsx) file.");
-        return;
-      }
-      setFile(f);
-      setError(null);
-      setResult(null);
-      setHeaders([]);
-      setPreview([]);
-
-      if (isXlsx(f)) {
-        setStatus("idle");
-        return;
-      }
-      setStatus("parsing");
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        parsePreview(e.target?.result as string);
-        setStatus("idle");
-      };
-      reader.readAsText(f);
-    },
-    [parsePreview]
-  );
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const f = e.dataTransfer.files[0];
-    if (f) handleFile(f);
+    if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
   };
 
-  const handleUpload = async () => {
-    if (!file) return;
-    setStatus("uploading");
-    setError(null);
-    try {
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        headers: { "x-filename": file.name, "content-type": "application/octet-stream" },
-        body: file,
-      });
-      if (res.status === 413) throw new Error("File is too large for a single upload. Try splitting it into smaller files (e.g. one hospital at a time).");
-      const text = await res.text();
-      let json: any;
-      try { json = JSON.parse(text); } catch { throw new Error(`Server error: ${text.slice(0, 200)}`); }
-      if (!res.ok) throw new Error(json.error ?? "Upload failed");
-      setResult(json);
-      setStatus("done");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
-      setStatus("error");
+  const removeItem = (id: string) => setQueue((q) => q.filter((f) => f.id !== id));
+
+  const updateItem = (id: string, patch: Partial<FileItem>) =>
+    setQueue((q) => q.map((f) => (f.id === id ? { ...f, ...patch } : f)));
+
+  const processAll = async () => {
+    const pending = queue.filter((f) => f.status === "pending");
+    if (pending.length === 0) return;
+    setRunning(true);
+
+    for (const item of pending) {
+      updateItem(item.id, { status: "uploading" });
+      try {
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          headers: { "x-filename": item.file.name, "content-type": "application/octet-stream" },
+          body: item.file,
+        });
+        if (res.status === 413) throw new Error("File too large — try splitting it into smaller files.");
+        const text = await res.text();
+        let json: any;
+        try { json = JSON.parse(text); } catch { throw new Error(`Server error: ${text.slice(0, 200)}`); }
+        if (!res.ok) throw new Error(json.error ?? "Upload failed");
+        updateItem(item.id, { status: "done", result: json });
+      } catch (e) {
+        updateItem(item.id, { status: "error", error: e instanceof Error ? e.message : "Upload failed" });
+      }
     }
+
+    setRunning(false);
   };
+
+  const total = queue.reduce(
+    (acc, f) => ({
+      hospitals: acc.hospitals + (f.result?.hospitalsUpserted ?? 0),
+      procedures: acc.procedures + (f.result?.proceduresUpserted ?? 0),
+      prices: acc.prices + (f.result?.pricesInserted ?? 0),
+    }),
+    { hospitals: 0, procedures: 0, prices: 0 }
+  );
+
+  const pendingCount = queue.filter((f) => f.status === "pending").length;
+  const doneCount = queue.filter((f) => f.status === "done").length;
+  const errorCount = queue.filter((f) => f.status === "error").length;
 
   return (
     <main className="min-h-screen bg-neutral-50">
       <div className="mx-auto max-w-3xl px-4 py-10">
-        <Link
-          href="/hospital-prices"
-          className="mb-6 inline-flex items-center gap-1 text-sm text-neutral-500 hover:text-neutral-800"
-        >
+        <Link href="/hospital-prices" className="mb-6 inline-flex items-center gap-1 text-sm text-neutral-500 hover:text-neutral-800">
           ← Back to Marketplace
         </Link>
 
-        <h1 className="text-2xl font-bold tracking-tight text-neutral-900">
-          Upload Price Transparency Data
-        </h1>
+        <h1 className="text-2xl font-bold tracking-tight text-neutral-900">Upload Price Transparency Data</h1>
         <p className="mt-2 text-sm text-neutral-500">
-          Upload any <strong>CSV</strong> or <strong>Excel (.xlsx)</strong> price transparency file —
-          regardless of format. AI will automatically detect the structure, column names, and layout
-          (including wide/pivot formats) and map it correctly.
+          Upload hospital price transparency files — CSV, Excel, JSON (CMS 2.0), or ZIP.
+          AI detects structure automatically. All data is saved to the shared database.
         </p>
 
-        {/* AI detection callout */}
         <div className="mt-4 flex items-start gap-3 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
           <span className="mt-0.5 text-base">✨</span>
           <div>
             <p className="font-medium">AI-powered structure detection</p>
             <p className="mt-0.5 text-xs text-blue-500">
-              Works with CMS standard files, custom hospital exports, pivot tables, per-hospital
-              files, and any other layout. No manual column mapping required.
+              Works with CMS standard files, custom hospital exports, pivot tables, and any other layout. Select multiple files at once.
             </p>
           </div>
         </div>
-
-        {/* Expected format reference */}
-        <details className="mt-4 rounded-lg border border-neutral-200 bg-white">
-          <summary className="cursor-pointer px-4 py-3 text-xs font-semibold uppercase tracking-wide text-neutral-500 hover:text-neutral-700">
-            Example column formats (click to expand)
-          </summary>
-          <div className="border-t border-neutral-100 px-4 py-3">
-            <p className="mb-2 text-xs text-neutral-500">
-              These are just examples — the AI handles many variations automatically.
-            </p>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-neutral-100">
-                    {["hospital_name","address","cpt_code","procedure_name","category","payer_name","payer_type","price","price_type"].map(
-                      (h) => (
-                        <th key={h} className="px-2 py-1.5 text-left font-mono font-medium text-neutral-500">
-                          {h}
-                        </th>
-                      )
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    {["NYU Langone","550 1st Ave","27447","Knee Replacement","Orthopedics","Aetna PPO","commercial","32500","negotiated"].map(
-                      (v, i) => (
-                        <td key={i} className="px-2 py-1.5 font-mono text-neutral-400">{v}</td>
-                      )
-                    )}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <p className="mt-2 text-xs text-neutral-400">
-              Required fields: <code className="rounded bg-neutral-100 px-1">hospital_name</code>,{" "}
-              <code className="rounded bg-neutral-100 px-1">cpt_code</code>,{" "}
-              <code className="rounded bg-neutral-100 px-1">price</code> — but column names can vary widely.
-            </p>
-          </div>
-        </details>
 
         {/* Drop zone */}
         <div
@@ -198,151 +110,146 @@ export default function UploadPage() {
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
           onClick={() => inputRef.current?.click()}
-          className={`mt-6 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-14 text-center transition-colors ${
-            dragOver
-              ? "border-blue-400 bg-blue-50"
-              : file
-              ? "border-green-400 bg-green-50"
-              : "border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50"
-          }`}
+          className={cn(
+            "mt-6 flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 text-center transition-colors",
+            dragOver ? "border-blue-400 bg-blue-50" : "border-neutral-200 bg-white hover:border-neutral-300 hover:bg-neutral-50"
+          )}
         >
           <input
             ref={inputRef}
             type="file"
-            accept=".csv,.xlsx,.xls,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            multiple
+            accept=".csv,.xlsx,.xls,.xlsm,.json,.zip"
             className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); }}
+            onChange={(e) => { if (e.target.files?.length) addFiles(e.target.files); e.target.value = ""; }}
           />
-          {file ? (
-            <>
-              <span className="text-2xl">{isXlsx(file) ? "📊" : "📄"}</span>
-              <p className="mt-2 font-medium text-neutral-800">{file.name}</p>
-              <p className="text-sm text-neutral-400">
-                {(file.size / 1024).toFixed(1)} KB — click to change
-              </p>
-            </>
-          ) : (
-            <>
-              <span className="text-3xl">⬆️</span>
-              <p className="mt-2 font-medium text-neutral-700">Drop your file here</p>
-              <p className="text-sm text-neutral-400">CSV or Excel (.xlsx) — click to browse</p>
-            </>
-          )}
+          <span className="text-3xl">⬆️</span>
+          <p className="mt-2 font-medium text-neutral-700">Drop files here or click to browse</p>
+          <p className="text-sm text-neutral-400">CSV, Excel (.xlsx), JSON (CMS 2.0), or ZIP — multiple files OK</p>
         </div>
 
-        {/* XLSX notice */}
-        {file && isXlsx(file) && headers.length === 0 && status !== "done" && (
-          <div className="mt-4 flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-            <span className="text-lg">📊</span>
-            <div>
-              <p className="font-medium">Excel file ready</p>
-              <p className="text-xs text-blue-500">
-                AI will analyze all sheets and detect the correct structure automatically.
+        {/* File queue */}
+        {queue.length > 0 && (
+          <div className="mt-4 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-neutral-100 bg-neutral-50 px-4 py-2.5">
+              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                {queue.length} file{queue.length !== 1 ? "s" : ""}
+                {doneCount > 0 && <span className="ml-2 text-green-600">{doneCount} done</span>}
+                {errorCount > 0 && <span className="ml-2 text-red-500">{errorCount} failed</span>}
               </p>
+              {pendingCount > 0 && !running && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setQueue((q) => q.filter((f) => f.status !== "done")); }}
+                  className="text-xs text-neutral-400 hover:text-neutral-600"
+                >
+                  Clear done
+                </button>
+              )}
             </div>
+
+            <ul className="divide-y divide-neutral-50">
+              {queue.map((item) => (
+                <li key={item.id} className="flex items-start gap-3 px-4 py-3">
+                  {/* Icon */}
+                  <span className="mt-0.5 text-lg shrink-0">
+                    {/\.zip$/i.test(item.file.name) ? "🗜️"
+                      : /\.json$/i.test(item.file.name) ? "📋"
+                      : /\.xlsx?/i.test(item.file.name) ? "📊"
+                      : "📄"}
+                  </span>
+
+                  {/* Info */}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-neutral-800">{item.file.name}</p>
+                    <p className="text-xs text-neutral-400">{(item.file.size / 1024 / 1024).toFixed(1)} MB</p>
+                    {item.status === "done" && item.result && (
+                      <p className="mt-1 text-xs text-green-600">
+                        🏥 {item.result.hospitalsUpserted} hospitals · 🩺 {item.result.proceduresUpserted} procedures · 💰 {item.result.pricesInserted.toLocaleString()} prices
+                      </p>
+                    )}
+                    {item.status === "error" && (
+                      <p className="mt-1 text-xs text-red-500">{item.error}</p>
+                    )}
+                  </div>
+
+                  {/* Status */}
+                  <div className="shrink-0 flex items-center gap-2">
+                    {item.status === "uploading" && <Loader2 className="size-4 animate-spin text-blue-500" />}
+                    {item.status === "done" && <CheckCircle className="size-4 text-green-500" />}
+                    {item.status === "error" && <XCircle className="size-4 text-red-500" />}
+                    {item.status === "pending" && !running && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); removeItem(item.id); }}
+                        className="text-neutral-300 hover:text-neutral-500 text-lg leading-none"
+                        aria-label="Remove"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
-        {/* CSV preview */}
-        {headers.length > 0 && (
-          <div className="mt-4 overflow-hidden rounded-lg border border-neutral-200 bg-white">
-            <p className="border-b border-neutral-100 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-              Preview (first 3 rows)
+        {/* Summary after all done */}
+        {doneCount > 0 && doneCount === queue.filter((f) => f.status !== "error").length && pendingCount === 0 && !running && (
+          <div className="mt-4 rounded-xl border border-green-200 bg-green-50 px-5 py-4">
+            <div className="flex items-center gap-2 mb-3">
+              <CheckCircle className="size-5 text-green-600 shrink-0" />
+              <p className="font-semibold text-green-800">Import complete</p>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Hospitals", value: total.hospitals, icon: "🏥" },
+                { label: "Procedures", value: total.procedures, icon: "🩺" },
+                { label: "Price entries", value: total.prices.toLocaleString(), icon: "💰" },
+              ].map((stat) => (
+                <div key={stat.label} className="rounded-lg bg-white border border-green-100 px-3 py-2.5 text-center">
+                  <p className="text-lg">{stat.icon}</p>
+                  <p className="text-lg font-bold text-green-800">{stat.value}</p>
+                  <p className="text-xs text-green-600">{stat.label}</p>
+                </div>
+              ))}
+            </div>
+            <Link
+              href="/hospital-prices"
+              className="mt-3 inline-block text-sm font-medium text-green-800 underline underline-offset-2 hover:text-green-900"
+            >
+              View marketplace with real data →
+            </Link>
+          </div>
+        )}
+
+        {/* Error summary */}
+        {errorCount > 0 && pendingCount === 0 && !running && (
+          <div className="mt-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+            <AlertCircle className="size-4 shrink-0 text-red-500 mt-0.5" />
+            <p className="text-sm text-red-700">
+              {errorCount} file{errorCount !== 1 ? "s" : ""} failed. Check the errors above and try re-uploading.
             </p>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-neutral-100 bg-neutral-50">
-                    {headers.map((h, i) => (
-                      <th key={i} className="px-3 py-2 text-left font-medium text-neutral-500">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.map((row, i) => (
-                    <tr key={i} className="border-b border-neutral-50">
-                      {row.map((cell, j) => (
-                        <td key={j} className="max-w-[140px] truncate px-3 py-2 text-neutral-700">{cell}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Upload in progress */}
-        {status === "uploading" && (
-          <div className="mt-4 flex items-center gap-3 rounded-lg border border-neutral-200 bg-white px-4 py-4 text-sm text-neutral-600">
-            <Loader2 className="size-4 animate-spin text-blue-500" />
-            <div>
-              <p className="font-medium text-neutral-800">Analyzing file structure with AI…</p>
-              <p className="text-xs text-neutral-400">
-                Detecting column layout, format type, and payer information
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Error */}
-        {error && (
-          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {error}
-          </div>
-        )}
-
-        {/* Success */}
-        {status === "done" && result && (
-          <div className="mt-4 space-y-3">
-            <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-4">
-              <p className="font-semibold text-green-800">Import complete!</p>
-              <ul className="mt-2 space-y-1 text-sm text-green-700">
-                <li>🏥 {result.hospitalsUpserted} hospital{result.hospitalsUpserted !== 1 ? "s" : ""} added / updated</li>
-                <li>🩺 {result.proceduresUpserted} procedure{result.proceduresUpserted !== 1 ? "s" : ""} added / updated</li>
-                <li>💰 {result.pricesInserted} price entr{result.pricesInserted !== 1 ? "ies" : "y"} inserted</li>
-              </ul>
-              <Link
-                href="/hospital-prices"
-                className="mt-3 inline-block text-sm font-medium text-green-800 underline underline-offset-2 hover:text-green-900"
-              >
-                View marketplace →
-              </Link>
-            </div>
-
-            {/* What AI detected */}
-            {result.schemaDetected && (
-              <div className="rounded-lg border border-neutral-200 bg-white px-4 py-3">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                  What AI detected
-                </p>
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                  <dt className="text-neutral-400">Format</dt>
-                  <dd className="font-medium text-neutral-700 capitalize">{result.schemaDetected.format}</dd>
-                  <dt className="text-neutral-400">Sheet used</dt>
-                  <dd className="font-medium text-neutral-700">{result.schemaDetected.bestSheet}</dd>
-                  <dt className="text-neutral-400">Header row</dt>
-                  <dd className="font-medium text-neutral-700">Row {result.schemaDetected.headerRow + 1}</dd>
-                  <dt className="text-neutral-400">Hospital source</dt>
-                  <dd className="font-medium text-neutral-700 capitalize">
-                    {result.schemaDetected.hospitalSource === "filename"
-                      ? `Filename (${result.schemaDetected.hospitalNameFromFilename})`
-                      : "Column in file"}
-                  </dd>
-                </dl>
-                {result.schemaDetected.notes && (
-                  <p className="mt-2 text-xs text-neutral-500 italic">&quot;{result.schemaDetected.notes}&quot;</p>
-                )}
-              </div>
-            )}
           </div>
         )}
 
         {/* Upload button */}
-        {file && status !== "done" && status !== "uploading" && (
-          <Button onClick={handleUpload} className="mt-4 w-full">
-            Import Price Data
-          </Button>
+        {pendingCount > 0 && !running && (
+          <button
+            onClick={processAll}
+            className="mt-4 w-full rounded-xl bg-violet-700 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-violet-800"
+          >
+            Import {pendingCount} file{pendingCount !== 1 ? "s" : ""}
+          </button>
+        )}
+
+        {running && (
+          <div className="mt-4 flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-5 py-4">
+            <Loader2 className="size-5 animate-spin text-violet-500 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-neutral-800">Processing files…</p>
+              <p className="text-xs text-neutral-400 mt-0.5">AI is detecting structure and importing prices. Large files may take several minutes each.</p>
+            </div>
+          </div>
         )}
       </div>
     </main>

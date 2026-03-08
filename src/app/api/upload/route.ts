@@ -230,49 +230,110 @@ async function flushBatch(
 // Streaming JSON — works for CMS 2.0 format and flat array format, any size
 // ---------------------------------------------------------------------------
 
-/** Yields complete top-level objects from a JSON array, line by line. */
+/**
+ * Yields complete top-level objects from a JSON array.
+ * Uses a character-level state machine so inStr/escaped state persists across
+ * lines and the array-start [ is detected even when it's on a different line
+ * from the key name.
+ */
 async function* streamJsonObjects(lines: AsyncGenerator<string>): AsyncGenerator<{ obj: Record<string, unknown>; hospitalName: string }> {
-  let inArray = false;
-  let depth = 0;
-  let currentLines: string[] = [];
+  // phase:
+  //   "header"     — scanning for hospital name + array trigger key
+  //   "seek_array" — found the key (or file is a flat array), looking for [
+  //   "in_array"   — inside the data array, collecting objects
+  let phase: "header" | "seek_array" | "in_array" = "header";
   let hospitalName = "";
 
+  // Character-level state (persists across lines)
+  let inStr = false;
+  let escaped = false;
+  let depth = 0;
+  let currentChars: string[] = [];
+
   for await (const line of lines) {
-    // Grab hospital_name from header before we reach the array
+    // Extract hospital name from header fields before we reach the array
     if (!hospitalName) {
       const m = line.match(/"(?:hospital_name|name)"\s*:\s*"([^"]+)"/);
       if (m) hospitalName = m[1];
     }
 
-    if (!inArray) {
-      // CMS 2.0: array is under a key like "standard_charge_information"
-      // Flat format: top-level [
-      if (line.includes('"standard_charge_information"') || line.trim() === "[") {
-        if (line.includes("[")) inArray = true;
+    // Detect transition from header → seek_array
+    if (phase === "header") {
+      if (
+        line.includes('"standard_charge_information"') ||
+        line.includes('"standard_charges"') ||
+        line.trim() === "["
+      ) {
+        phase = "seek_array";
+        // Fall through — process this line char-by-char below
+      } else {
+        continue;
       }
-      continue;
     }
 
-    // Count brace depth to detect object boundaries
-    // Note: counts { and } outside of strings (simplified — works for typical hospital data)
-    let inStr = false;
+    // Process every character on this line
     for (let i = 0; i < line.length; i++) {
       const ch = line[i];
-      if (ch === '"' && (i === 0 || line[i - 1] !== "\\")) inStr = !inStr;
-      if (!inStr) {
-        if (ch === "{") { if (depth === 0) currentLines = []; depth++; }
-        else if (ch === "}") depth--;
+
+      if (phase === "seek_array") {
+        if (ch === "[") {
+          phase = "in_array";
+          depth = 0;
+          currentChars = [];
+        }
+        continue;
+      }
+
+      // ── phase === "in_array" ──────────────────────────────────────────────
+
+      if (escaped) {
+        escaped = false;
+        if (depth > 0) currentChars.push(ch);
+        continue;
+      }
+
+      if (ch === "\\" && inStr) {
+        escaped = true;
+        if (depth > 0) currentChars.push(ch);
+        continue;
+      }
+
+      if (ch === '"') {
+        inStr = !inStr;
+        if (depth > 0) currentChars.push(ch);
+        continue;
+      }
+
+      if (inStr) {
+        if (depth > 0) currentChars.push(ch);
+        continue;
+      }
+
+      // Outside strings:
+      if (ch === "{") {
+        if (depth === 0) currentChars = ["{"];
+        else currentChars.push(ch);
+        depth++;
+      } else if (ch === "}") {
+        depth--;
+        if (depth >= 0) currentChars.push(ch);
+        if (depth === 0 && currentChars.length > 0) {
+          try {
+            const obj = JSON.parse(currentChars.join("")) as Record<string, unknown>;
+            yield { obj, hospitalName };
+          } catch { /* skip malformed */ }
+          currentChars = [];
+        }
+      } else if (ch === "]" && depth === 0) {
+        return; // end of array
+      } else {
+        if (depth > 0) currentChars.push(ch);
       }
     }
 
-    if (depth > 0 || currentLines.length > 0) currentLines.push(line);
-
-    if (depth === 0 && currentLines.length > 0) {
-      try {
-        const obj = JSON.parse(currentLines.join("\n"));
-        yield { obj, hospitalName };
-      } catch { /* skip malformed objects */ }
-      currentLines = [];
+    // Preserve newlines within multi-line objects for valid JSON reconstruction
+    if (phase === "in_array" && depth > 0) {
+      currentChars.push("\n");
     }
   }
 }
@@ -488,14 +549,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: { notes: isCms ? "CMS 2.0 standard format detected" : "Flat array format detected" } });
     }
 
-    // ── XLSX: load into memory (reject if > 200MB) ──────────────────────────
+    // ── XLSX: load into memory ──────────────────────────────────────────────
     if (ext === "xlsx" || ext === "xls" || ext === "xlsm") {
-      const contentLength = parseInt(req.headers.get("content-length") ?? "0");
-      if (contentLength > 200 * 1024 * 1024) {
-        return NextResponse.json({
-          error: "Excel files over 200MB are not supported. Please save as CSV (.csv) and re-upload — CSV files of any size are supported.",
-        }, { status: 400 });
-      }
       const buffer = Buffer.from(await req.arrayBuffer());
       const result = await processXlsx(buffer, filename);
       return NextResponse.json(result);

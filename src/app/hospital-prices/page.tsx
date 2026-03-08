@@ -86,8 +86,6 @@ export default async function HospitalPricesPage() {
             <Stat value={priceCount > 0 ? priceCount.toLocaleString() : "30,000+"} label="price records" />
             <Divider />
             <Stat value="AI" label="procedure identification" />
-            <Divider />
-            <Stat value="Free" label="no account needed" />
           </div>
 
           {/* Compliance note */}

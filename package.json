@@ -62,6 +62,7 @@
     "@types/react-dom": "^19",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.5.2",
+    "dotenv": "^17.3.1",
     "eslint": "9.29.0",
     "eslint-config-next": "15.3.4",
     "jsdom": "^26.1.0",

@@ -25,7 +25,16 @@
       "Bash(curl:*)",
       "Bash(NODE_OPTIONS='--require ./node-compat.cjs' npx tsx:*)",
       "Bash(node:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(open:*)",
+      "WebFetch(domain:www.akitahealth.com)",
+      "Bash(npm show:*)",
+      "Bash(NODE_OPTIONS='--require ./node-compat.cjs' npm run:*)",
+      "Bash(vercel env:*)",
+      "Bash(npm i:*)",
+      "Bash(npx prisma:*)",
+      "Bash(grep:*)",
+      "Bash(awk NR==3{print; exit}:*)"
     ]
   }
 }
