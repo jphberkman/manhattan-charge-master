@@ -54,6 +54,9 @@ model Procedure {
   description String   @default("")
 
   prices      PriceEntry[]
+
+  @@index([name])
+  @@index([category])
 }
 
 model PriceEntry {
@@ -72,4 +75,7 @@ model PriceEntry {
 
   @@index([procedureId])
   @@index([procedureId, payerType])
+  @@index([procedureId, payerType, priceType])
+  @@index([hospitalId])
+  @@index([payerType, priceType])
 }

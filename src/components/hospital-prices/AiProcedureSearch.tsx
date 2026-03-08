@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Search, Loader2, ChevronDown, ChevronUp, CircleDot,
   Stethoscope, Wrench, AlertCircle, ListCollapse,
@@ -72,6 +72,8 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
+  const [progress, setProgress] = useState(0);
   const [breakdown, setBreakdown] = useState<ProcedureBreakdown | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [coinsurance, setCoinsurance] = useState(0.20);
@@ -80,18 +82,39 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
   const [hospitalPrices, setHospitalPrices] = useState<HospitalComparisonEntry[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const phaseTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const elapsedTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(() => () => phaseTimers.current.forEach(clearTimeout), []);
+  useEffect(() => () => {
+    phaseTimers.current.forEach(clearTimeout);
+    if (elapsedTimer.current) clearInterval(elapsedTimer.current);
+    if (progressTimer.current) clearInterval(progressTimer.current);
+  }, []);
 
-  const startPhases = () => {
+  const startPhases = useCallback(() => {
     phaseTimers.current.forEach(clearTimeout);
     phaseTimers.current = [];
     setLoadingPhase(0);
+    setElapsed(0);
+    setProgress(0);
+
+    // Elapsed timer — tick every second
+    if (elapsedTimer.current) clearInterval(elapsedTimer.current);
+    elapsedTimer.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+
+    // Progress bar — ramps to ~90% over 12s then stalls
+    if (progressTimer.current) clearInterval(progressTimer.current);
+    const start = Date.now();
+    progressTimer.current = setInterval(() => {
+      const t = (Date.now() - start) / 12000; // normalise to 12s
+      setProgress(Math.min(90, Math.round(90 * (1 - Math.exp(-3 * t)))));
+    }, 200);
+
     [3000, 6000, 9000].forEach((delay, i) => {
       const t = setTimeout(() => setLoadingPhase(i + 1), delay);
       phaseTimers.current.push(t);
     });
-  };
+  }, []);
 
   const submit = async (q: string) => {
     const trimmed = q.trim();
@@ -121,8 +144,11 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate breakdown");
     } finally {
-      setLoading(false);
+      setProgress(100);
+      setTimeout(() => setLoading(false), 300);
       phaseTimers.current.forEach(clearTimeout);
+      if (elapsedTimer.current) { clearInterval(elapsedTimer.current); elapsedTimer.current = null; }
+      if (progressTimer.current) { clearInterval(progressTimer.current); progressTimer.current = null; }
     }
   };
 
@@ -208,15 +234,23 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
       {loading && (
         <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
           <div className="border-b border-neutral-100 bg-slate-800 px-6 py-5">
-            <div className="h-5 w-48 animate-pulse rounded-lg bg-white/10" />
-            <div className="mt-2 h-4 w-72 animate-pulse rounded-lg bg-white/10" />
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Loader2 className="size-4 animate-spin text-violet-400 shrink-0" />
+                <p className="text-sm font-semibold text-white">{LOADING_PHASES[loadingPhase]}</p>
+              </div>
+              <span className="text-xs text-white/40 tabular-nums">{elapsed}s</span>
+            </div>
+            {/* Progress bar */}
+            <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-violet-400 transition-all duration-300 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="mt-2 text-xs text-white/40">AI is analyzing procedure costs across Manhattan hospitals…</p>
           </div>
           <div className="px-6 py-5 space-y-3">
-            <div className="flex items-center gap-3 mb-4">
-              <Loader2 className="size-4 animate-spin text-violet-500 shrink-0" />
-              <p className="text-sm font-medium text-neutral-700">{LOADING_PHASES[loadingPhase]}</p>
-            </div>
-            {/* Hospital skeleton rows */}
             {Array.from({ length: 6 }).map((_, i) => (
               <div key={i} className={cn(
                 "flex items-center gap-4 rounded-xl border p-4 transition-opacity",

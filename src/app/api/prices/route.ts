@@ -33,6 +33,7 @@ export async function GET(request: Request) {
       },
     },
     orderBy: { priceInCents: "asc" },
+    take: 1000,
   });
 
   const data = entries.map((e) => ({

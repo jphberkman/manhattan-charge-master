@@ -172,62 +172,69 @@ Be thorough. For a surgical case include ALL of: pre-op labs/imaging, anesthesia
       breakdown = JSON.parse(repair);
     }
 
-    // Enrich components with real DB prices where CPT matches
-    const enrichedComponents = await Promise.all(
-      breakdown.components.map(async (comp) => {
-        if (!comp.cptCode) return comp;
-        const procedure = await prisma.procedure.findUnique({
-          where: { cptCode: comp.cptCode },
-          include: {
-            prices: {
-              include: { hospital: { select: { name: true } } },
-            },
-          },
-        });
-        if (!procedure || procedure.prices.length === 0) return comp;
+    // Batch-fetch all CPT codes in one query instead of N individual queries
+    const cptCodes = breakdown.components.map((c) => c.cptCode).filter(Boolean);
+    const insPayerType = payerType ?? "commercial";
 
-        const prices = procedure.prices;
+    const [grossRows, cashRows, insRows, cheapestRows] = await Promise.all([
+      prisma.priceEntry.findMany({
+        where: { procedure: { cptCode: { in: cptCodes } }, priceType: "gross" },
+        select: { priceInCents: true, procedure: { select: { cptCode: true } } },
+        take: 500,
+      }),
+      prisma.priceEntry.findMany({
+        where: { procedure: { cptCode: { in: cptCodes } }, payerType: "cash" },
+        select: { priceInCents: true, procedure: { select: { cptCode: true } } },
+        take: 500,
+      }),
+      prisma.priceEntry.findMany({
+        where: {
+          procedure: { cptCode: { in: cptCodes } },
+          payerType: insPayerType,
+          priceType: { in: ["negotiated", "discounted"] },
+        },
+        select: { priceInCents: true, procedure: { select: { cptCode: true } } },
+        take: 500,
+      }),
+      prisma.priceEntry.findMany({
+        where: { procedure: { cptCode: { in: cptCodes } } },
+        select: { priceInCents: true, procedure: { select: { cptCode: true } }, hospital: { select: { name: true } } },
+        orderBy: { priceInCents: "asc" },
+        distinct: ["procedureId"],
+      }),
+    ]);
 
-        const grossPrices = prices
-          .filter((p) => p.priceType === "gross")
-          .map((p) => p.priceInCents / 100);
+    // Group by CPT code
+    const byCode = (rows: { priceInCents: number; procedure: { cptCode: string } }[]) =>
+      rows.reduce<Record<string, number[]>>((acc, r) => {
+        (acc[r.procedure.cptCode] ??= []).push(r.priceInCents / 100);
+        return acc;
+      }, {});
 
-        const cashPrices = prices
-          .filter((p) => p.payerType === "cash")
-          .map((p) => p.priceInCents / 100);
+    const grossByCpt = byCode(grossRows);
+    const cashByCpt = byCode(cashRows);
+    const insByCpt = byCode(insRows);
+    const cheapestByCpt = cheapestRows.reduce<Record<string, string>>((acc, r) => {
+      if (!acc[r.procedure.cptCode]) acc[r.procedure.cptCode] = (r as { hospital: { name: string }; procedure: { cptCode: string } }).hospital.name;
+      return acc;
+    }, {});
 
-        const insPrices = prices
-          .filter((p) => {
-            if (payerType && p.payerType === payerType) return true;
-            if (!payerType && p.payerType === "commercial") return true;
-            return false;
-          })
-          .filter((p) => p.priceType === "negotiated" || p.priceType === "discounted")
-          .map((p) => p.priceInCents / 100);
-
-        const cheapest = [...prices].sort((a, b) => a.priceInCents - b.priceInCents)[0];
-
-        return {
-          ...comp,
-          ...(grossPrices.length > 0 && {
-            chargemasterLow: Math.round(Math.min(...grossPrices)),
-            chargemasterHigh: Math.round(Math.max(...grossPrices)),
-          }),
-          ...(insPrices.length > 0 && {
-            insuranceLow: Math.round(Math.min(...insPrices)),
-            insuranceHigh: Math.round(Math.max(...insPrices)),
-          }),
-          ...(cashPrices.length > 0 && {
-            cashLow: Math.round(Math.min(...cashPrices)),
-            cashHigh: Math.round(Math.max(...cashPrices)),
-          }),
-          notes: comp.notes
-            ? `${comp.notes} Best price: ${cheapest?.hospital.name}.`
-            : `Real charge master data available. Best price: ${cheapest?.hospital.name}.`,
-          hasRealData: true,
-        };
-      })
-    );
+    const enrichedComponents = breakdown.components.map((comp) => {
+      if (!comp.cptCode) return comp;
+      const gross = grossByCpt[comp.cptCode] ?? [];
+      const cash = cashByCpt[comp.cptCode] ?? [];
+      const ins = insByCpt[comp.cptCode] ?? [];
+      if (gross.length === 0 && cash.length === 0 && ins.length === 0) return comp;
+      const bestHospital = cheapestByCpt[comp.cptCode];
+      return {
+        ...comp,
+        ...(gross.length > 0 && { chargemasterLow: Math.round(Math.min(...gross)), chargemasterHigh: Math.round(Math.max(...gross)) }),
+        ...(ins.length > 0 && { insuranceLow: Math.round(Math.min(...ins)), insuranceHigh: Math.round(Math.max(...ins)) }),
+        ...(cash.length > 0 && { cashLow: Math.round(Math.min(...cash)), cashHigh: Math.round(Math.max(...cash)) }),
+        notes: comp.notes ? `${comp.notes} Best price: ${bestHospital}.` : `Real charge master data available. Best price: ${bestHospital}.`,
+        hasRealData: true,
+      };
+    });
 
     const sumField = (field: keyof BreakdownComponent) =>
       enrichedComponents.reduce((s, c) => {

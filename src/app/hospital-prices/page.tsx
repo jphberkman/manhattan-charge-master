@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { HospitalPricesClient } from "@/components/hospital-prices/HospitalPricesClient";
 import { Search, TrendingDown, ShieldCheck, Activity, Lock } from "lucide-react";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600; // cache page for 1 hour
 
 export const metadata = {
   title: "Manhattan Medical Marketplace",
@@ -11,17 +11,14 @@ export const metadata = {
 };
 
 export default async function HospitalPricesPage() {
-  const procedures = await prisma.procedure.findMany({
-    orderBy: [{ category: "asc" }, { name: "asc" }],
-    select: { id: true, cptCode: true, name: true, category: true, description: true },
-  });
-
-  const hospitals = await prisma.hospital.findMany({
-    orderBy: { name: "asc" },
-    select: { id: true, name: true, lastSeeded: true },
-  });
-
-  const priceCount = await prisma.priceEntry.count();
+  // Only fetch the count for the hero stat — procedures are lazy-loaded client-side
+  const [hospitals, priceCount] = await Promise.all([
+    prisma.hospital.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, lastSeeded: true },
+    }),
+    prisma.priceEntry.count(),
+  ]);
 
   return (
     <main className="min-h-screen bg-white">
@@ -144,7 +141,7 @@ export default async function HospitalPricesPage() {
 
       {/* ── Main marketplace ── */}
       <div className="mx-auto max-w-5xl px-6 py-10 pb-20">
-        <HospitalPricesClient procedures={procedures} />
+        <HospitalPricesClient />
       </div>
     </main>
   );

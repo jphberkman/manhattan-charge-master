@@ -18,11 +18,7 @@ export interface Procedure {
   description: string;
 }
 
-interface Props {
-  procedures: Procedure[];
-}
-
-export function HospitalPricesClient({ procedures }: Props) {
+export function HospitalPricesClient() {
   const [insurance, setInsurance] = useState<InsuranceSelection | null>(null);
   const [showInsurancePicker, setShowInsurancePicker] = useState(false);
   const [selected, setSelected] = useState<Procedure | null>(null);
@@ -33,6 +29,8 @@ export function HospitalPricesClient({ procedures }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [isAiEstimate, setIsAiEstimate] = useState(false);
   const [showCptBrowse, setShowCptBrowse] = useState(false);
+  const [procedures, setProcedures] = useState<Procedure[]>([]);
+  const [proceduresLoading, setProceduresLoading] = useState(false);
 
   const fetchPrices = useCallback(async (procedure: Procedure, ins: InsuranceSelection | null) => {
     setLoading(true);
@@ -103,6 +101,20 @@ export function HospitalPricesClient({ procedures }: Props) {
   const handleProcedureSelect = (p: Procedure) => {
     setSelected(p);
     fetchPrices(p, insurance);
+  };
+
+  const handleOpenCptBrowse = async () => {
+    const next = !showCptBrowse;
+    setShowCptBrowse(next);
+    if (next && procedures.length === 0) {
+      setProceduresLoading(true);
+      try {
+        const res = await fetch("/api/procedures");
+        if (res.ok) setProcedures(await res.json());
+      } finally {
+        setProceduresLoading(false);
+      }
+    }
   };
 
   const insuranceLabel = insurance ? insurance.displayLabel : "Typical insurance";
@@ -177,7 +189,7 @@ export function HospitalPricesClient({ procedures }: Props) {
       {/* ── CPT code browse (for power users) ── */}
       <div className="overflow-hidden rounded-2xl border border-neutral-100 bg-white">
         <button
-          onClick={() => setShowCptBrowse((v) => !v)}
+          onClick={handleOpenCptBrowse}
           className="flex w-full items-center justify-between gap-4 px-5 py-3.5 text-left hover:bg-neutral-50 transition-colors"
         >
           <div className="flex items-center gap-2.5">
@@ -194,6 +206,13 @@ export function HospitalPricesClient({ procedures }: Props) {
 
         {showCptBrowse && (
           <div className="border-t border-neutral-100 px-5 pb-5 pt-4 space-y-4">
+            {proceduresLoading ? (
+              <div className="flex items-center gap-2 py-4">
+                <div className="size-4 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+                <p className="text-sm text-neutral-400">Loading procedures…</p>
+              </div>
+            ) : (
+            <>
             <ProcedureSearch
               procedures={procedures}
               selected={selected}
@@ -244,6 +263,8 @@ export function HospitalPricesClient({ procedures }: Props) {
                   loading={loading}
                 />
               </div>
+            )}
+            </>
             )}
           </div>
         )}

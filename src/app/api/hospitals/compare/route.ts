@@ -30,16 +30,69 @@ const MANHATTAN_HOSPITALS = [
   { id: "bellevue",         name: "Bellevue Hospital Center",                      address: "462 1st Ave, New York, NY 10016" },
 ];
 
-// Map DB hospital names to canonical list ids (only exact/known matches)
+// Map DB hospital names to canonical list ids
+// Handles exact names, partial names, and pipe-separated compound names from the seeder
 const DB_NAME_TO_CANONICAL: Record<string, string> = {
-  "nyu langone health (tisch hospital)": "nyu-langone",
-  "nyu langone health":                  "nyu-langone",
-  "nyu langone orthopedic hospital":     "nyu-orthopedic",
-  "bellevue hospital center":            "bellevue",
+  // NYU Langone
+  "nyu langone health (tisch hospital)":  "nyu-langone",
+  "nyu langone health":                   "nyu-langone",
+  "nyu langone":                          "nyu-langone",
+  "nyu langone orthopedic hospital":      "nyu-orthopedic",
+  "nyu langone orthopedic":               "nyu-orthopedic",
+  // NYP / Weill Cornell
+  "newyork-presbyterian weill cornell medical center": "nyp-cornell",
+  "new york-presbyterian weill cornell":  "nyp-cornell",
+  "nyp weill cornell":                    "nyp-cornell",
+  "weill cornell":                        "nyp-cornell",
+  // NYP / Columbia
+  "newyork-presbyterian columbia university irving medical center": "nyp-columbia",
+  "nyp columbia":                         "nyp-columbia",
+  "columbia university irving medical center": "nyp-columbia",
+  // Mount Sinai
+  "the mount sinai hospital":             "mount-sinai",
+  "mount sinai hospital":                 "mount-sinai",
+  "mount sinai":                          "mount-sinai",
+  "mount sinai morningside":              "mount-sinai-west",
+  "mount sinai west":                     "mount-sinai-west",
+  // MSK
   "memorial sloan kettering cancer center": "msk",
-  "mount sinai hospital":                "mount-sinai",
-  "the mount sinai hospital":            "mount-sinai",
+  "memorial sloan-kettering":             "msk",
+  "msk":                                  "msk",
+  // HSS
+  "hospital for special surgery":         "hss",
+  "hss":                                  "hss",
+  // Lenox Hill / Northwell
+  "lenox hill hospital":                  "lenox-hill",
+  "lenox hill hospital (northwell)":      "lenox-hill",
+  "northwell lenox hill":                 "lenox-hill",
+  // Bellevue / NYC H+H
+  "bellevue hospital center":             "bellevue",
+  "bellevue hospital":                    "bellevue",
+  "nyc health + hospitals":               "bellevue",
+  "nyc health and hospitals":             "bellevue",
+  "new york city health and hospitals":   "bellevue",
 };
+
+// For compound pipe-separated names (e.g. from NYP multi-hospital files),
+// try to match any segment against the canonical map
+function resolveCanonicalId(rawName: string): string | null {
+  const lower = rawName.toLowerCase().trim();
+  // Direct lookup first
+  if (DB_NAME_TO_CANONICAL[lower]) return DB_NAME_TO_CANONICAL[lower];
+  // Pipe-separated compound name — try each segment
+  if (lower.includes("|")) {
+    for (const segment of lower.split("|")) {
+      const s = segment.trim();
+      if (DB_NAME_TO_CANONICAL[s]) return DB_NAME_TO_CANONICAL[s];
+      // Partial keyword match
+      const match = Object.entries(DB_NAME_TO_CANONICAL).find(([k]) => s.includes(k) || k.includes(s));
+      if (match) return match[1];
+    }
+  }
+  // Partial keyword match on full name
+  const partial = Object.entries(DB_NAME_TO_CANONICAL).find(([k]) => lower.includes(k) || k.includes(lower));
+  return partial ? partial[1] : null;
+}
 
 // Sanity-check: minimum believable price for a full procedure (filters fee-schedule fragments)
 const MIN_PROCEDURE_PRICE = 500;
@@ -97,9 +150,8 @@ export async function GET(req: NextRequest) {
     const price = e.priceInCents / 100;
     if (price < MIN_PROCEDURE_PRICE) continue; // filter out fee-schedule fragments
 
-    // Map to canonical hospital id
-    const canonicalId =
-      DB_NAME_TO_CANONICAL[e.hospital.name.toLowerCase()] ?? null;
+    // Map to canonical hospital id (handles exact, partial, and pipe-separated names)
+    const canonicalId = resolveCanonicalId(e.hospital.name);
 
     // Use canonical id if available, else hospital's own DB id
     const key = canonicalId ?? e.hospital.id;

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Loader2, Star, Building2, TrendingDown, Sparkles,
-  ChevronDown, ChevronUp, BadgeCheck, Trophy,
+  ChevronDown, ChevronUp, BadgeCheck, Trophy, ShieldCheck, ShieldAlert,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PhysicianRecommendation, PhysicianHospital } from "@/app/api/physicians/recommend/route";
@@ -148,8 +148,22 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, co
                               <Star className="size-3" /> Top pick
                             </span>
                           )}
+                          {doc.npiVerified ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
+                              <ShieldCheck className="size-3" /> NPI Verified
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                              <ShieldAlert className="size-3" /> Unverified
+                            </span>
+                          )}
                         </div>
-                        <p className="mt-0.5 text-sm text-neutral-600">{doc.specialty}</p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="mt-0.5 text-sm text-neutral-600">{doc.npiSpecialty || doc.specialty}</p>
+                          {doc.npi && (
+                            <p className="mt-0.5 text-xs text-neutral-400">NPI {doc.npi}</p>
+                          )}
+                        </div>
                         <p className="mt-1 text-xs text-neutral-500 leading-snug">{doc.whyRecommended}</p>
 
                         {/* Highlights */}
@@ -224,12 +238,15 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, co
           </div>
 
           {/* Footer disclaimer */}
-          <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3">
+          <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 space-y-1.5">
+            <p className="text-xs text-neutral-400">
+              <ShieldCheck className="inline size-3 mr-1 text-green-500" />
+              <span className="font-semibold text-neutral-500">NPI Verified</span> doctors are confirmed in the CMS National Provider Identifier registry as licensed NY physicians.
+              Unverified doctors are AI-suggested but could not be confirmed — verify before booking.
+            </p>
             <p className="text-xs text-neutral-400">
               <Sparkles className="inline size-3 mr-1 text-violet-400" />
-              Physician suggestions are AI-generated based on publicly available information about Manhattan specialists.
-              Always verify that your doctor is in-network with your insurance before booking.
-              Prices are estimates — your actual cost depends on your specific plan and deductible status.
+              Always confirm your doctor is in-network with your insurance. Prices are estimates — your actual cost depends on your specific plan and remaining deductible.
             </p>
           </div>
         </>

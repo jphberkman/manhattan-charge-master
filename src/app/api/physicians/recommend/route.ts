@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anthropicCall } from "@/lib/anthropic-fetch";
+import { validateNpiPhysician } from "@/lib/npi";
 import type { HospitalComparisonEntry } from "@/app/api/hospitals/compare/route";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +21,9 @@ export interface PhysicianRecommendation {
   hospitals: PhysicianHospital[];
   cheapestHospital: PhysicianHospital | null;
   whyRecommended: string;
+  npi: string | null;
+  npiVerified: boolean;
+  npiSpecialty: string | null;
 }
 
 // Short display names for the hospital cards
@@ -75,6 +79,8 @@ export async function POST(req: NextRequest) {
     : `No specific insurer. Generic commercial insurance, ${Math.round(coinsurance * 100)}% coinsurance.`;
 
   try {
+    const hasInsurance = !!(insurerName && payerType !== "cash");
+
     const text = await anthropicCall({
       max_tokens: 2000,
       system: `You are an expert in Manhattan healthcare who knows the top surgeons and specialists at every major hospital. Help patients find the best doctors for their specific procedure. Return ONLY valid JSON — no markdown.`,
@@ -83,6 +89,7 @@ export async function POST(req: NextRequest) {
         content: `Recommend the top 3 physicians in Manhattan for: "${procedureName}" (CPT ${cptCode ?? "unknown"}).
 
 ${insurerContext}
+${hasInsurance ? `IMPORTANT: Prioritize physicians who are IN-NETWORK with ${insurerName}. Include "✓ In-network: ${insurerName}" as one of the highlights for each in-network physician. If a physician is out-of-network, clearly note it in highlights as "⚠ Verify network status with ${insurerName}".` : ""}
 
 Here are the EXACT hospital prices already calculated for this procedure. You MUST use these exact prices — do not invent or modify them:
 ${priceList || "(No price data available yet — omit cost fields)"}
@@ -96,8 +103,8 @@ Return JSON:
       "name": "Dr. First Last",
       "credentials": "MD, FACS",
       "specialty": "Subspecialty name",
-      "highlights": ["High-volume: 300+ procedures/year", "Fellowship-trained at HSS", "Board certified"],
-      "whyRecommended": "One plain-English sentence on why this doctor stands out for this procedure.",
+      "highlights": ["High-volume: 300+ procedures/year", "Fellowship-trained at HSS", "Board certified"${hasInsurance ? `, "✓ In-network: ${insurerName}"` : ""}],
+      "whyRecommended": "One plain-English sentence on why this doctor stands out for this procedure${hasInsurance ? `, including their network status with ${insurerName}` : ""}.",
       "hospitals": [
         {
           "hospitalId": "<id from list above>",
@@ -112,7 +119,8 @@ Guidelines:
 - Pick real or highly plausible well-known surgeons/specialists practicing in Manhattan
 - Vary the hospitals across the 3 physicians so patients can see options at different price points
 - Include at least one physician at a lower-cost hospital (Bellevue, Mount Sinai West) if relevant
-- HSS and NYU Orthopedic are top-tier for musculoskeletal; MSK for oncology; NYP/Columbia for complex cases`,
+- HSS and NYU Orthopedic are top-tier for musculoskeletal; MSK for oncology; NYP/Columbia for complex cases
+${hasInsurance ? `- Sort physicians so in-network doctors appear first` : ""}`,
       }],
     });
 
@@ -131,7 +139,7 @@ Guidelines:
     };
 
     // Merge AI physician data with real prices from priceMap
-    const physicians: PhysicianRecommendation[] = parsed.physicians.map((doc) => {
+    const physicians = parsed.physicians.map((doc) => {
       const hospitals: PhysicianHospital[] = doc.hospitals.map((h) => {
         const prices = priceMap.get(h.hospitalId);
         return {
@@ -161,10 +169,29 @@ Guidelines:
         whyRecommended: doc.whyRecommended,
         hospitals: withCost,
         cheapestHospital: cheapest,
+        npi: null,
+        npiVerified: false,
+        npiSpecialty: null,
       };
     });
 
-    return NextResponse.json({ physicians });
+    // Validate each physician against the NPI registry in parallel
+    const verified = await Promise.all(
+      physicians.map(async (doc) => {
+        const parts = doc.name.replace(/^Dr\.?\s*/i, "").trim().split(/\s+/);
+        const firstName = parts[0] ?? "";
+        const lastName = parts[parts.length - 1] ?? "";
+        const npiResult = await validateNpiPhysician(firstName, lastName);
+        return {
+          ...doc,
+          npi: npiResult?.npi ?? null,
+          npiVerified: !!npiResult,
+          npiSpecialty: npiResult?.specialty ?? null,
+        };
+      })
+    );
+
+    return NextResponse.json({ physicians: verified });
   } catch (err) {
     console.error("Physician recommend error:", err);
     return NextResponse.json({ error: "Failed to generate recommendations" }, { status: 500 });

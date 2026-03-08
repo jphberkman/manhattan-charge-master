@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 3600; // cache 1 hour — procedures change only when seeder runs
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -18,6 +18,7 @@ export async function GET(request: Request) {
         }
       : undefined,
     orderBy: [{ category: "asc" }, { name: "asc" }],
+    take: q ? 50 : 200,
     select: {
       id: true,
       cptCode: true,
