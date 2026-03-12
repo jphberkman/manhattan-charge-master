@@ -163,9 +163,11 @@ async function fetchChargemasterData(query: string): Promise<CptPriceMap> {
   );
 }
 
-/** Formats the chargemaster map as a human-readable constraint table for the AI prompt. */
+/** Formats the chargemaster map as a human-readable constraint table for the AI prompt.
+ *  Capped at 20 entries to keep the system prompt within a safe token budget. */
 function buildChargemasterContext(priceMap: CptPriceMap): string {
   const lines = Object.entries(priceMap)
+    .slice(0, 20)
     .map(([cpt, data]) => {
       const parts = [
         formatRangeLine("list", data.gross),
@@ -297,7 +299,7 @@ and follow-up visits.`;
       // 4. Stream AI response
       const text = await anthropicStream(
         {
-          max_tokens: 3000,
+          max_tokens: 4096,
           cacheSystemPrompt: true,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
@@ -307,7 +309,10 @@ and follow-up visits.`;
 
       // 5. Parse JSON
       const match = text.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error("Could not parse AI response");
+      if (!match) {
+        console.error("AI response contained no JSON. Length:", text.length, "Preview:", text.slice(0, 300));
+        throw new Error("Could not parse AI response");
+      }
 
       let rawBreakdown: Omit<ProcedureBreakdown, "coinsurance" | "insurerName" | "dataCompleteness">;
       try {
