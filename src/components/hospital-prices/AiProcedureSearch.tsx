@@ -164,13 +164,16 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
       const data: ProcedureSearchResponse = await res.json();
 
       if (!res.ok || data.noData || !data.procedures.length) {
+        dbMatchesRef.current = [];
         setPhase("no-data");
       } else {
+        dbMatchesRef.current = data.procedures;
         setDbMatches(data.procedures);
         setSelectedMatch(data.procedures[0]);
         setPhase("db-results");
       }
     } catch {
+      dbMatchesRef.current = [];
       setPhase("no-data");
     }
 
@@ -203,6 +206,9 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
     });
   }, []);
 
+  // Keep a ref so stale closures in runAiBreakdown can read current dbMatches
+  const dbMatchesRef = useRef<ProcedureSearchResult[]>([]);
+
   // ── Phase 2: AI breakdown ──────────────────────────────────────────────────
 
   const runAiBreakdown = async (q: string, ins: InsuranceSelection | null) => {
@@ -214,6 +220,9 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // Helper: is this still the active call? (guards against stale finally/catch)
+    const isActive = () => abortRef.current === controller;
+
     setPhase("ai-loading");
     setStreamingText("");
     setBreakdown(null);
@@ -221,6 +230,11 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
     setExpandedIds(new Set());
     setHospitalPrices([]);
     startAiPhases();
+
+    // Client-side timeout: abort after 55s so the UI never hangs indefinitely
+    const timeoutId = setTimeout(() => controller.abort(), 55_000);
+
+    let resultReceived = false;
 
     try {
       const res = await fetch("/api/procedure-breakdown", {
@@ -256,11 +270,12 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
               const parsed = JSON.parse(line.slice(6).trim());
               if (currentEvent === "chunk")  setStreamingText((p) => p + (parsed.text as string));
               if (currentEvent === "result") {
+                resultReceived = true;
                 setStreamingText("");
                 setBreakdown(parsed as ProcedureBreakdown);
                 onBreakdownReady?.(parsed as ProcedureBreakdown);
                 setPhase("ai-results");
-                setInsurancePickerExpanded(false); // collapse picker now that results are shown
+                setInsurancePickerExpanded(false);
               }
               if (currentEvent === "error") throw new Error((parsed as { message: string }).message);
             } catch (e) {
@@ -269,18 +284,38 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
           }
         }
       }
+
+      // Stream closed without sending a result (server timeout, crash, etc.)
+      if (!resultReceived && isActive()) {
+        setError("Analysis timed out — please try again.");
+        setPhase(dbMatchesRef.current.length ? "db-results" : "no-data");
+      }
     } catch (e) {
-      // AbortError = intentional cancel (user changed insurance), don't show error
-      if (e instanceof Error && e.name === "AbortError") return;
-      setError(e instanceof Error ? e.message : "Failed to generate breakdown");
-      setPhase(dbMatches.length ? "db-results" : "no-data");
+      // AbortError = intentional cancel (insurance change or client timeout)
+      if (e instanceof Error && e.name === "AbortError") {
+        if (isActive()) {
+          // This was our own 55s timeout, not a user-triggered abort
+          setError("Analysis timed out — please try again.");
+          setPhase(dbMatchesRef.current.length ? "db-results" : "no-data");
+        }
+        return;
+      }
+      if (isActive()) {
+        setError(e instanceof Error ? e.message : "Failed to generate breakdown");
+        setPhase(dbMatchesRef.current.length ? "db-results" : "no-data");
+      }
     } finally {
-      setProgress(100);
-      setTimeout(() => {
-        phaseTimers.current.forEach(clearTimeout);
-        if (elapsedTimer.current)  { clearInterval(elapsedTimer.current);  elapsedTimer.current  = null; }
-        if (progressTimer.current) { clearInterval(progressTimer.current); progressTimer.current = null; }
-      }, 300);
+      clearTimeout(timeoutId);
+      // Only clean up timers if this is still the active call.
+      // If not, a newer call already took ownership of elapsedTimer/progressTimer.
+      if (isActive()) {
+        setProgress(100);
+        setTimeout(() => {
+          phaseTimers.current.forEach(clearTimeout);
+          if (elapsedTimer.current)  { clearInterval(elapsedTimer.current);  elapsedTimer.current  = null; }
+          if (progressTimer.current) { clearInterval(progressTimer.current); progressTimer.current = null; }
+        }, 300);
+      }
     }
   };
 
@@ -288,8 +323,8 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
 
   const handleInsuranceChange = (ins: InsuranceSelection | null) => {
     setInsurance(ins);
-    // If AI is running or done, restart with new insurance selection
-    if (phase === "ai-loading" || phase === "ai-results") {
+    // Re-run AI with new insurance if we have a query and are past the search phase
+    if (query.trim() && (phase === "ai-loading" || phase === "ai-results" || phase === "db-results" || phase === "no-data")) {
       void runAiBreakdown(query, ins);
     }
   };
