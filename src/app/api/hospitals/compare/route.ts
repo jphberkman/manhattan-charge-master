@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { anthropicCall } from "@/lib/anthropic-fetch";
 import { redis } from "@/lib/redis";
+import { getBestMedicareBenchmark } from "@/lib/medicare";
+import type { MedicareBenchmark } from "@/lib/medicare";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -24,7 +26,20 @@ export interface HospitalComparisonEntry {
   dataQuality: "real" | "partial" | "estimated";
   /** Backward-compat alias for dataQuality === "estimated". */
   isAiEstimate: boolean;
+  /** ISO date string of when this hospital's data was last uploaded. */
+  dataLastUpdated: string | null;
+  /**
+   * "episode"   — price represents the full episode of care (facility + professional + ancillary).
+   * "line-item" — price is a single fee-schedule line item (e.g. surgeon fee only); scaled to episode.
+   * "unknown"   — scope cannot be determined from available data.
+   */
+  priceScope: "episode" | "line-item" | "unknown";
   rank: number;
+}
+
+export interface CompareResponse {
+  entries: HospitalComparisonEntry[];
+  medicare: MedicareBenchmark | null;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -153,8 +168,8 @@ export async function GET(req: NextRequest) {
 
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
-  const cacheKey = `compare4:${allCptCodes.sort().join(",")}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}|${episodeInsMedian ?? ""}|${episodeCashMedian ?? ""}`;
-  const cached = await redis.get<HospitalComparisonEntry[]>(cacheKey);
+  const cacheKey = `compare5:${allCptCodes.sort().join(",")}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}|${episodeInsMedian ?? ""}|${episodeCashMedian ?? ""}`;
+  const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
   // 1. Look up procedures by all CPT codes
@@ -167,7 +182,7 @@ export async function GET(req: NextRequest) {
 
   // 2. Fetch all DB price entries for matched procedures
   type PriceRow = {
-    hospital: { id: string; name: string; address: string };
+    hospital: { id: string; name: string; address: string; lastSeeded: Date | null };
     payerName: string;
     payerType: string;
     priceInCents: number;
@@ -177,7 +192,7 @@ export async function GET(req: NextRequest) {
   const dbEntries: PriceRow[] = procedureIds.length
     ? await prisma.priceEntry.findMany({
         where: { procedureId: { in: procedureIds } },
-        include: { hospital: { select: { id: true, name: true, address: true } } },
+        include: { hospital: { select: { id: true, name: true, address: true, lastSeeded: true } } },
       })
     : [];
 
@@ -188,6 +203,7 @@ export async function GET(req: NextRequest) {
     cashPrices: number[];
     insPrices: number[];
     insPayerName: string | null;
+    lastSeeded: Date | null;
   };
 
   const hospMap = new Map<string, HospMap>();
@@ -209,6 +225,7 @@ export async function GET(req: NextRequest) {
         cashPrices: [],
         insPrices: [],
         insPayerName: null,
+        lastSeeded: e.hospital.lastSeeded ?? null,
       });
     }
 
@@ -256,14 +273,17 @@ export async function GET(req: NextRequest) {
     // No tier multipliers — hospitals get differentiated by their own real data spread.
     let dataQuality: HospitalComparisonEntry["dataQuality"] =
       insuranceRate != null && cashPrice != null ? "real" : "partial";
+    let priceScope: HospitalComparisonEntry["priceScope"] = "unknown";
 
     if (episodeInsMedian && effectiveInsuranceRate && effectiveInsuranceRate < episodeInsMedian * 0.30) {
       effectiveInsuranceRate = episodeInsMedian;
       effectiveCashPrice     = episodeCashMedian ?? Math.round(episodeInsMedian * 1.22);
       dataQuality            = "partial"; // clearly label — price is episode-scaled, not raw DB
+      priceScope             = "line-item";
     } else if (episodeCashMedian && effectiveCashPrice && !effectiveInsuranceRate && effectiveCashPrice < episodeCashMedian * 0.30) {
       effectiveCashPrice = episodeCashMedian;
       dataQuality        = "partial";
+      priceScope         = "line-item";
     }
 
     const patientCost = effectiveInsuranceRate != null ? Math.round(effectiveInsuranceRate * coinsurance) : null;
@@ -279,6 +299,8 @@ export async function GET(req: NextRequest) {
       payerName: h.insPayerName,
       dataQuality,
       isAiEstimate: false,
+      dataLastUpdated: h.lastSeeded?.toISOString() ?? null,
+      priceScope,
     });
     coveredIds.add(h.hospital.id);
   }
@@ -346,8 +368,10 @@ Return JSON array:
               insurerPays: insuranceRate != null ? Math.round(insuranceRate * (1 - coinsurance)) : null,
               cashPrice: item.cashPrice,
               payerName: payerName ?? (payerType ? `${payerType} insurance` : null),
-              dataQuality: "estimated",
+              dataQuality: "estimated" as const,
               isAiEstimate: true,
+              dataLastUpdated: null,
+              priceScope: "episode" as const,
             },
           ];
         });
@@ -370,7 +394,9 @@ Return JSON array:
   });
 
   const ranked: HospitalComparisonEntry[] = allEntries.map((e, i) => ({ ...e, rank: i + 1 }));
+  const medicare = getBestMedicareBenchmark(allCptCodes);
+  const response: CompareResponse = { entries: ranked, medicare };
 
-  await redis.set(cacheKey, ranked, { ex: 86400 });
-  return NextResponse.json(ranked);
+  await redis.set(cacheKey, response, { ex: 86400 });
+  return NextResponse.json(response);
 }

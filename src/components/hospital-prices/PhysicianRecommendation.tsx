@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Loader2, Star, Building2, Sparkles,
   BadgeCheck, Trophy, ShieldCheck, DatabaseZap,
+  Activity, ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PhysicianRecommendation, PhysicianResponse } from "@/app/api/physicians/recommend/route";
@@ -170,6 +171,17 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, ho
 
                         <p className="mt-1 text-xs text-neutral-500 leading-snug">{doc.whyRecommended}</p>
 
+                        {/* Medicare procedure volume */}
+                        {doc.procedureVolume != null && (
+                          <div className="mt-2">
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                              <Activity className="size-3" />
+                              {doc.procedureVolume.toLocaleString()} Medicare procedures ({doc.volumeYear})
+                            </span>
+                            <span className="ml-2 text-xs text-neutral-400">CMS data · higher = more experienced</span>
+                          </div>
+                        )}
+
                         {/* Highlights */}
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {doc.highlights.map((h) => (
@@ -193,6 +205,52 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, ho
                             </span>
                           ))}
                         </div>
+
+                        {/* External profile links */}
+                        {doc.profileLinks && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {doc.profileLinks.healthgrades && (
+                              <a
+                                href={doc.profileLinks.healthgrades}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-600 hover:border-neutral-300 hover:bg-neutral-50 transition-colors"
+                              >
+                                <ExternalLink className="size-3" /> Healthgrades
+                              </a>
+                            )}
+                            {doc.profileLinks.usNews && (
+                              <a
+                                href={doc.profileLinks.usNews}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-600 hover:border-neutral-300 hover:bg-neutral-50 transition-colors"
+                              >
+                                <ExternalLink className="size-3" /> US News
+                              </a>
+                            )}
+                            {doc.profileLinks.npiRegistry && (
+                              <a
+                                href={doc.profileLinks.npiRegistry}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-600 hover:bg-blue-100 transition-colors"
+                              >
+                                <DatabaseZap className="size-3" /> NPI Registry
+                              </a>
+                            )}
+                            {doc.profileLinks.googleSearch && (
+                              <a
+                                href={doc.profileLinks.googleSearch}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-xs font-medium text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50 transition-colors"
+                              >
+                                <ExternalLink className="size-3" /> Google
+                              </a>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -211,8 +269,12 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, ho
             )}
             <p className="text-xs text-neutral-400">
               <ShieldCheck className="inline size-3 mr-1 text-green-500" />
-              <span className="font-semibold text-neutral-500">NPI Registry</span> = sourced directly from the CMS National Provider Identifier database.{" "}
+              <span className="font-semibold text-neutral-500">NPI Registry</span> = sourced from the CMS National Provider Identifier database.{" "}
               <span className="font-semibold text-neutral-500">NPI Verified</span> = AI-recommended name matched in the registry.
+            </p>
+            <p className="text-xs text-neutral-400">
+              <Activity className="inline size-3 mr-1 text-emerald-500" />
+              <span className="font-semibold text-neutral-500">Procedure volume</span> = Medicare claims data (CMS 2022). Reflects Medicare patients only — actual total volume is higher. Not a quality rating.
             </p>
             <p className="text-xs text-neutral-400">
               <Sparkles className="inline size-3 mr-1 text-violet-400" />

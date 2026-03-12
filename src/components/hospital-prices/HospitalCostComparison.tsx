@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Sparkles, Building2, Trophy, ShieldCheck } from "lucide-react";
+import { Loader2, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Building2, Trophy, ShieldCheck, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GlossaryTip } from "./GlossaryTip";
-import type { HospitalComparisonEntry } from "@/app/api/hospitals/compare/route";
+import type { HospitalComparisonEntry, CompareResponse } from "@/app/api/hospitals/compare/route";
+import type { MedicareBenchmark } from "@/lib/medicare";
 import type { InsuranceSelection } from "./InsuranceSelector";
 
 const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -31,6 +32,7 @@ interface Props {
 
 export function HospitalCostComparison({ cptCode, procedureName, insurance, coinsurance, episodeTotals, allCptCodes, onPricesLoaded }: Props) {
   const [entries, setEntries] = useState<HospitalComparisonEntry[]>([]);
+  const [medicare, setMedicare] = useState<MedicareBenchmark | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("rank");
@@ -49,10 +51,11 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
       if (episodeTotals?.cashLow)  params.set("episodeCashLow",  String(episodeTotals.cashLow));
       if (episodeTotals?.cashHigh) params.set("episodeCashHigh", String(episodeTotals.cashHigh));
       const res = await fetch(`/api/hospitals/compare?${params}`);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed");
-      setEntries(data);
-      onPricesLoaded?.(data);
+      const data: CompareResponse = await res.json();
+      if (!res.ok) throw new Error((data as unknown as { error: string }).error ?? "Failed");
+      setEntries(data.entries);
+      setMedicare(data.medicare ?? null);
+      onPricesLoaded?.(data.entries);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load hospital prices");
     } finally {
@@ -131,6 +134,26 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
           )}
         </div>
       </div>
+
+      {/* ── Medicare benchmark banner ── */}
+      {!loading && medicare && (
+        <div className="border-b border-blue-100 bg-blue-50 px-6 py-3">
+          <div className="flex flex-wrap items-start gap-2">
+            <Info className="mt-0.5 size-4 shrink-0 text-blue-500" />
+            <div className="text-xs text-blue-800">
+              <span className="font-semibold">Medicare benchmark ({medicare.episodeType}):</span>{" "}
+              Medicare pays ~{fmt.format(medicare.episodeRate ?? medicare.physicianFee)} for this procedure.
+              Commercial insurance typically pays{" "}
+              <span className="font-semibold">
+                {fmt.format(Math.round((medicare.episodeRate ?? medicare.physicianFee) * medicare.commercialMultiplierLow))}–
+                {fmt.format(Math.round((medicare.episodeRate ?? medicare.physicianFee) * medicare.commercialMultiplierHigh))}
+              </span>{" "}
+              ({medicare.commercialMultiplierLow}–{medicare.commercialMultiplierHigh}× Medicare).{" "}
+              <span className="text-blue-600">{medicare.notes}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Loading ── */}
       {loading && (
@@ -330,8 +353,16 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                               {isBestCash && showIns && !isBestIns && <Badge color="blue">Cheapest cash</Badge>}
                               {entry.dataQuality === "estimated" && <Badge color="amber">Estimated</Badge>}
                               {entry.dataQuality === "partial" && <Badge color="amber">Partial data</Badge>}
+                              {entry.priceScope === "line-item" && <Badge color="amber">Fee schedule (scaled)</Badge>}
                             </div>
-                            <p className="mt-0.5 max-w-[200px] truncate text-xs text-neutral-400">{entry.hospital.address}</p>
+                            <div className="mt-0.5 flex items-center gap-2">
+                              <p className="max-w-[200px] truncate text-xs text-neutral-400">{entry.hospital.address}</p>
+                              {entry.dataLastUpdated && (
+                                <p className="shrink-0 text-xs text-neutral-300">
+                                  Data: {new Date(entry.dataLastUpdated).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                                </p>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { anthropicCall } from "@/lib/anthropic-fetch";
 import { searchNpiPhysicians, validateNpiPhysician } from "@/lib/npi";
 import { redis } from "@/lib/redis";
+import { getBatchCmsUtilization, buildProfileLinks } from "@/lib/cms-utilization";
+import type { PhysicianProfileLinks } from "@/lib/cms-utilization";
 import type { HospitalComparisonEntry } from "@/app/api/hospitals/compare/route";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +27,15 @@ export interface PhysicianRecommendation {
   npiSpecialty: string | null;
   /** True when this physician came from the NPI Registry (not AI-invented). */
   npiSource: boolean;
+  /**
+   * Number of times this physician performed this procedure on Medicare patients.
+   * Sourced from CMS Medicare Physician & Other Practitioners dataset (2022).
+   * Null if not found in the dataset (e.g. primarily treats younger/commercial patients).
+   */
+  procedureVolume: number | null;
+  volumeYear: number | null;
+  /** Direct links to external profile and review sites. */
+  profileLinks: PhysicianProfileLinks | null;
 }
 
 export interface PhysicianResponse {
@@ -111,17 +122,30 @@ export async function POST(req: NextRequest) {
   const npiCandidates = await searchNpiPhysicians(taxonomyHint, 15);
   const useNpiSource = npiCandidates.length >= 3;
 
+  // 2. Fetch Medicare procedure volume for each candidate (parallel, non-blocking)
+  //    This gives us real, objective volume data to rank by before passing to AI.
+  const volumeMap = cptCode
+    ? await getBatchCmsUtilization(npiCandidates.map((c) => c.npi), cptCode)
+    : new Map();
+
   let physicians: PhysicianRecommendation[];
   let sourceNote: string;
 
   try {
     if (useNpiSource) {
-      // 2a. NPI-first path: pass real verified physicians to Claude for ranking
-      const candidateList = npiCandidates
-        .map(
-          (p, i) =>
-            `${i}: ${p.firstName} ${p.lastName}${p.credential ? `, ${p.credential}` : ""} — ${p.specialty} (${p.practiceCity})`,
-        )
+      // 2a. NPI-first path: sort by Medicare procedure volume, then pass to Claude for ranking
+      const sortedCandidates = [...npiCandidates].sort((a, b) => {
+        const va = volumeMap.get(a.npi)?.totalServices ?? 0;
+        const vb = volumeMap.get(b.npi)?.totalServices ?? 0;
+        return vb - va; // highest volume first
+      });
+
+      const candidateList = sortedCandidates
+        .map((p, i) => {
+          const vol = volumeMap.get(p.npi);
+          const volNote = vol ? ` [${vol.totalServices} Medicare procedures/${vol.year}]` : "";
+          return `${i}: ${p.firstName} ${p.lastName}${p.credential ? `, ${p.credential}` : ""} — ${p.specialty} (${p.practiceCity})${volNote}`;
+        })
         .join("\n");
 
       const rankText = await anthropicCall({
@@ -132,7 +156,8 @@ Return ONLY valid JSON — no markdown.`,
         messages: [
           {
             role: "user",
-            content: `Select and rank the top 3 physicians for "${procedureName}" (CPT ${cptCode ?? "unknown"}) from this verified NPI Registry list:
+            content: `Select and rank the top 3 physicians for "${procedureName}" (CPT ${cptCode ?? "unknown"}) from this verified NPI Registry list.
+Candidates are pre-sorted by Medicare procedure volume (highest first) — use this as a strong signal of experience.
 
 ${candidateList}
 
@@ -145,8 +170,8 @@ Return JSON:
   "selections": [
     {
       "candidateIndex": <0-based index from list above>,
-      "highlights": ["Specific reason 1", "Specific reason 2", "Board certified", "Fellowship-trained"],
-      "whyRecommended": "One sentence on why this physician is a strong choice for this procedure.",
+      "highlights": ["Specific reason 1 (include procedure volume if known)", "Board certified", "Fellowship-trained"],
+      "whyRecommended": "One sentence on why this physician is a strong choice — mention volume if available.",
       "hospitals": [
         { "hospitalId": "<id from system list, or empty string>", "hospitalName": "<hospital name>" }
       ]
@@ -155,6 +180,7 @@ Return JSON:
 }
 
 Guidelines:
+- Prefer candidates with higher Medicare procedure volume as a proxy for experience
 - Select physicians whose taxonomy matches the procedure specialty
 - Prefer those with Manhattan practice city
 - List 1-3 realistic hospital affiliations per physician based on their specialty and hospital type
@@ -180,9 +206,10 @@ Guidelines:
       physicians = ranked.selections
         .slice(0, 3)
         .flatMap((sel): PhysicianRecommendation[] => {
-          const candidate = npiCandidates[sel.candidateIndex];
+          const candidate = sortedCandidates[sel.candidateIndex];
           if (!candidate) return [];
           const fullName = `${candidate.firstName} ${candidate.lastName}`;
+          const vol = volumeMap.get(candidate.npi) ?? null;
           return [
             {
               name: `Dr. ${fullName}`,
@@ -198,11 +225,15 @@ Guidelines:
               npiVerified: true,
               npiSpecialty: candidate.specialty,
               npiSource: true,
+              procedureVolume: vol?.totalServices ?? null,
+              volumeYear: vol?.year ?? null,
+              profileLinks: buildProfileLinks(candidate.npi, candidate.firstName, candidate.lastName, candidate.specialty),
             },
           ];
         });
 
-      sourceNote = `Physicians sourced from the NPI Registry (${npiCandidates.length} verified ${taxonomyHint} practitioners in NYC). Ranked and described by AI.`;
+      const hasVolumeData = physicians.some((p) => p.procedureVolume != null);
+      sourceNote = `Physicians sourced from the NPI Registry (${npiCandidates.length} verified ${taxonomyHint} practitioners in NYC). ${hasVolumeData ? "Ranked by Medicare procedure volume (CMS 2022 data). " : ""}Descriptions by AI.`;
     } else {
       // 2b. Fallback path: AI generation with strong anti-hallucination guardrails
       const genText = await anthropicCall({
@@ -274,6 +305,7 @@ Guidelines:
             !npiResult.specialty.toLowerCase().includes(doc.specialty.toLowerCase().split(" ")[0]) &&
             !doc.specialty.toLowerCase().includes(npiResult.specialty.toLowerCase().split(" ")[0]);
 
+          const npi = specialtyMismatch ? null : (npiResult?.npi ?? null);
           return {
             name:            doc.name,
             credentials:     doc.credentials,
@@ -284,10 +316,20 @@ Guidelines:
               hospitalName: SHORT_NAMES[h.hospitalId] ?? h.hospitalName,
               hospitalId:   h.hospitalId,
             })),
-            npi:             specialtyMismatch ? null : (npiResult?.npi ?? null),
+            npi,
             npiVerified:     !specialtyMismatch && !!npiResult,
             npiSpecialty:    npiResult?.specialty ?? null,
             npiSource:       false,
+            procedureVolume: null,
+            volumeYear:      null,
+            profileLinks:    npi
+              ? buildProfileLinks(npi, parts[0] ?? "", parts.at(-1) ?? "", doc.specialty)
+              : {
+                  npiRegistry: "",
+                  healthgrades: `https://www.healthgrades.com/usearch?what=${encodeURIComponent(doc.name.replace(/^Dr\.?\s*/i, ""))}&state=NY&type=physician`,
+                  usNews: `https://health.usnews.com/doctors/search?name=${encodeURIComponent(doc.name.replace(/^Dr\.?\s*/i, ""))}&location=New+York%2C+NY`,
+                  googleSearch: `https://www.google.com/search?q=${encodeURIComponent(doc.name + " " + doc.specialty + " Manhattan reviews")}`,
+                },
           } satisfies PhysicianRecommendation;
         }),
       );

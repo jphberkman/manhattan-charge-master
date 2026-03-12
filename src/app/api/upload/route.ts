@@ -339,23 +339,38 @@ async function* streamJsonObjects(lines: AsyncGenerator<string>): AsyncGenerator
 }
 
 function cmsObjectToRows(obj: Record<string, unknown>, hospitalName: string): NormalizedRow[] {
-  const codes = (obj.codes as Array<{ code: string; type: string }>) ?? [];
-  const cptCode = codes.find((c) => c.type?.toUpperCase() === "CPT")?.code ?? "";
+  // Support both CMS 1.x (codes[].code/type) and CMS 2024 (billing_code_information[].billing_code/billing_code_type)
+  type CodeEntry = { code?: string; billing_code?: string; type?: string; billing_code_type?: string };
+  const codes = ((obj.codes ?? obj.billing_code_information) as CodeEntry[]) ?? [];
+  const cptEntry = codes.find((c) => (c.type ?? c.billing_code_type)?.toUpperCase() === "CPT");
+  const cptCode = (cptEntry?.code ?? cptEntry?.billing_code ?? "").trim();
   const procedureName = String(obj.description ?? cptCode);
   if (!cptCode && !procedureName) return [];
 
+  const base = { hospitalName, address: "Manhattan, NY", cptCode: cptCode || procedureName.slice(0, 10), procedureName, category: "General" };
   const rows: NormalizedRow[] = [];
+
   for (const charge of (obj.standard_charges as Record<string, unknown>[]) ?? []) {
     if (charge.gross_charge) {
-      rows.push({ hospitalName, address: "Manhattan, NY", cptCode, procedureName, category: "General", payerName: "Gross", payerType: "gross", priceInCents: Math.round(Number(charge.gross_charge) * 100), priceType: "gross" });
+      rows.push({ ...base, payerName: "Gross", payerType: "gross", priceInCents: Math.round(Number(charge.gross_charge) * 100), priceType: "gross" });
     }
     if (charge.discounted_cash) {
-      rows.push({ hospitalName, address: "Manhattan, NY", cptCode, procedureName, category: "General", payerName: "Cash", payerType: "cash", priceInCents: Math.round(Number(charge.discounted_cash) * 100), priceType: "discounted" });
+      rows.push({ ...base, payerName: "Cash", payerType: "cash", priceInCents: Math.round(Number(charge.discounted_cash) * 100), priceType: "discounted" });
+    }
+    // CMS 2024: min/max negotiated charges at the charge level
+    if (charge.minimum_negotiated_charge) {
+      rows.push({ ...base, payerName: "Min negotiated", payerType: "commercial", priceInCents: Math.round(Number(charge.minimum_negotiated_charge) * 100), priceType: "min" });
+    }
+    if (charge.maximum_negotiated_charge) {
+      rows.push({ ...base, payerName: "Max negotiated", payerType: "commercial", priceInCents: Math.round(Number(charge.maximum_negotiated_charge) * 100), priceType: "max" });
     }
     for (const payer of (charge.payers_information as Record<string, unknown>[]) ?? []) {
-      const price = payer.standard_charge_dollar ?? payer.negotiated_rate ?? payer.price;
+      // Skip purely percentage-based entries (no dollar equivalent available)
+      const price = payer.standard_charge_dollar ?? payer.negotiated_rate ?? payer.price ?? payer.estimated_amount;
+      if (!price && payer.standard_charge_percentage) continue;
       if (!price) continue;
-      rows.push({ hospitalName, address: "Manhattan, NY", cptCode, procedureName, category: "General", payerName: String(payer.payer_name ?? "Unknown"), payerType: normalizePayerType(String(payer.payer_name ?? "")), priceInCents: Math.round(Number(price) * 100), priceType: normalizePriceType(String(payer.billing_class ?? "negotiated")) });
+      const payerNameStr = String(payer.payer_name ?? "Unknown");
+      rows.push({ ...base, payerName: payerNameStr, payerType: normalizePayerType(payerNameStr), priceInCents: Math.round(Number(price) * 100), priceType: normalizePriceType(String(payer.billing_class ?? charge.setting ?? "negotiated")) });
     }
   }
   return rows.filter((r) => r.priceInCents > 0);
@@ -473,7 +488,7 @@ export async function POST(req: NextRequest) {
           const fallback = entryName.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
           let isCms = false, detectedFormat = false;
           for await (const { obj, hospitalName } of streamJsonObjects(streamLines(webStream))) {
-            if (!detectedFormat) { isCms = "standard_charges" in obj || "codes" in obj; detectedFormat = true; }
+            if (!detectedFormat) { isCms = "standard_charges" in obj || "codes" in obj || "billing_code_information" in obj; detectedFormat = true; }
             batch.push(...(isCms ? cmsObjectToRows(obj, hospitalName || fallback) : flatJsonObjectToRows(obj, fallback)));
             if (batch.length >= 5000) {
               const s = await flushBatch(batch, entryName, hCache, pCache);
@@ -521,7 +536,7 @@ export async function POST(req: NextRequest) {
 
       for await (const { obj, hospitalName } of streamJsonObjects(streamLines(req.body))) {
         if (!detectedFormat) {
-          isCms = "standard_charges" in obj || "codes" in obj;
+          isCms = "standard_charges" in obj || "codes" in obj || "billing_code_information" in obj;
           detectedFormat = true;
         }
         const rows = isCms
