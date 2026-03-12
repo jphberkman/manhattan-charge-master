@@ -1,13 +1,12 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { ChevronDown, ChevronUp, Search, ShieldCheck, X, Upload } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, Upload } from "lucide-react";
 import Link from "next/link";
-import { InsuranceSelector, type InsuranceSelection } from "./InsuranceSelector";
 import { InsurancePriceTable } from "./InsurancePriceTable";
 import { ProcedureSearch } from "./ProcedureSearch";
 import { AiProcedureSearch } from "./AiProcedureSearch";
-import { cn } from "@/lib/utils";
+import type { InsuranceSelection } from "./InsuranceSelector";
 import type { PriceApiEntry } from "@/lib/price-transparency/types";
 
 export interface Procedure {
@@ -19,8 +18,6 @@ export interface Procedure {
 }
 
 export function HospitalPricesClient() {
-  const [insurance, setInsurance] = useState<InsuranceSelection | null>(null);
-  const [showInsurancePicker, setShowInsurancePicker] = useState(false);
   const [selected, setSelected] = useState<Procedure | null>(null);
 
   const [insurancePrices, setInsurancePrices] = useState<PriceApiEntry[]>([]);
@@ -31,6 +28,8 @@ export function HospitalPricesClient() {
   const [showCptBrowse, setShowCptBrowse] = useState(false);
   const [procedures, setProcedures] = useState<Procedure[]>([]);
   const [proceduresLoading, setProceduresLoading] = useState(false);
+  // CPT browse still has its own insurance since it's a separate flow
+  const [cptInsurance] = useState<InsuranceSelection | null>(null);
 
   const fetchPrices = useCallback(async (procedure: Procedure, ins: InsuranceSelection | null) => {
     setLoading(true);
@@ -87,20 +86,9 @@ export function HospitalPricesClient() {
     }
   }, []);
 
-  // Called for every change (including mid-selection) — keep panel open
-  const handleInsuranceChange = (ins: InsuranceSelection | null) => {
-    setInsurance(ins);
-    if (selected) fetchPrices(selected, ins);
-  };
-
-  // Called only when the user has finished picking insurer + plan
-  const handleInsuranceDone = () => {
-    setShowInsurancePicker(false);
-  };
-
   const handleProcedureSelect = (p: Procedure) => {
     setSelected(p);
-    fetchPrices(p, insurance);
+    fetchPrices(p, cptInsurance);
   };
 
   const handleOpenCptBrowse = async () => {
@@ -117,56 +105,13 @@ export function HospitalPricesClient() {
     }
   };
 
-  const insuranceLabel = insurance ? insurance.displayLabel : "Typical insurance";
+  const insuranceLabel = cptInsurance ? cptInsurance.displayLabel : "Typical insurance";
 
   return (
     <div className="space-y-4">
 
-      {/* ── Insurance bar ── */}
-      <div className="rounded-2xl border border-neutral-200 bg-white shadow-sm overflow-hidden">
-        <button
-          onClick={() => setShowInsurancePicker((v) => !v)}
-          className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left hover:bg-neutral-50 transition-colors"
-        >
-          <div className="flex items-center gap-3">
-            <ShieldCheck className={cn("size-5 shrink-0", insurance ? "text-violet-600" : "text-neutral-300")} />
-            <div>
-              <p className="text-xs text-neutral-400 font-medium">Your insurance</p>
-              {insurance ? (
-                <p className="text-sm font-semibold text-violet-700">{insurance.displayLabel}</p>
-              ) : (
-                <p className="text-sm font-medium text-neutral-500">
-                  Tap to add your insurance — we&apos;ll show what you&apos;d actually pay
-                </p>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {insurance && (
-              <span
-                role="button"
-                onClick={(e) => { e.stopPropagation(); handleInsuranceChange(null); }}
-                className="flex items-center gap-1 rounded-full border border-neutral-200 px-2.5 py-0.5 text-xs text-neutral-400 hover:text-red-500 hover:border-red-200"
-              >
-                <X className="size-3" /> Remove
-              </span>
-            )}
-            {showInsurancePicker
-              ? <ChevronUp className="size-4 text-neutral-400" />
-              : <ChevronDown className="size-4 text-neutral-400" />
-            }
-          </div>
-        </button>
-
-        {showInsurancePicker && (
-          <div className="border-t border-neutral-100 px-5 pb-5 pt-4">
-            <InsuranceSelector value={insurance} onChange={handleInsuranceChange} onDone={handleInsuranceDone} />
-          </div>
-        )}
-      </div>
-
-      {/* ── Main search ── */}
-      <AiProcedureSearch insurance={insurance} />
+      {/* ── Main AI search (self-contained with inline insurance) ── */}
+      <AiProcedureSearch />
 
       {/* ── Admin: upload / validate data ── */}
       <div className="flex gap-2">
@@ -237,11 +182,6 @@ export function HospitalPricesClient() {
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    {insurance && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
-                        {insurance.displayLabel}
-                      </span>
-                    )}
                     {isAiEstimate && (
                       <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
                         AI Estimates

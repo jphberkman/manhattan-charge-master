@@ -227,9 +227,21 @@ export async function POST(req: NextRequest) {
         : "No specific insurer selected — use typical commercial in-network estimates.";
 
       // 3. Build AI prompt — real data as hard constraints, not suggestions
-      const systemPrompt = `You are a healthcare cost transparency expert for Manhattan hospitals.
+      const systemPrompt = `You are a healthcare cost transparency expert for Manhattan hospitals with deep clinical knowledge.
 
 Your job is to produce a structured JSON cost breakdown for medical procedures.
+
+CLINICAL REASONING PROTOCOL — before building the bill, reason through:
+1. What condition is described and what does standard of care dictate? (reference AAOS, ACS, ACC/AHA, ACOG guidelines as applicable)
+2. What is the MOST COMMON surgical/procedural treatment path and why?
+3. What are the specific procedure steps, typical OR time, and anesthesia type?
+4. What specific implants, hardware, or devices are typically used? Be granular — not "hardware" but "titanium locking compression plate 3.5mm, 6 cortical screws (HCPCS C1713)"
+5. What pre-op diagnostics are required? (MRI, CT, labs, cardiac clearance, etc.)
+6. Expected hospital stay: inpatient days or same-day/23-hour?
+7. Post-op rehabilitation protocol?
+
+Use this reasoning to ensure the bill includes EVERY component a patient would actually be charged for.
+
 ${
   hasDbData
     ? `REAL CHARGEMASTER DATA — use these as reference ranges for matching CPT codes.
@@ -249,10 +261,11 @@ Set "dataSource": "estimated" for all components and use realistic Manhattan mar
 
 RULES:
 1. Handle both condition descriptions (e.g. "torn ACL") and direct procedure names.
-2. For conditions, identify the most appropriate surgical procedure first.
+2. For conditions, identify the most appropriate surgical procedure first (most common treatment, not the most aggressive).
 3. For surgical procedures, list every individual implant, screw, plate, nail, anchor, and graft separately with HCPCS codes.
 4. Never fabricate prices for CPT codes listed in the real data table above — use those exact ranges.
-5. Respond with ONLY valid JSON — no markdown, no commentary.`;
+5. Manhattan hospital prices are significantly higher than national averages — apply a 1.4–1.8x multiplier vs. national benchmarks.
+6. Respond with ONLY valid JSON — no markdown, no commentary.`;
 
       const userPrompt = `Patient query: "${query}"
 ${insurerContext}

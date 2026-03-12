@@ -4,13 +4,13 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Search, Loader2, ChevronDown, ChevronUp, CircleDot,
   Stethoscope, Wrench, AlertCircle, ListCollapse, Sparkles,
-  DatabaseZap, FileX, ArrowRight,
+  DatabaseZap, FileX, ShieldCheck, X, Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProcedureBreakdown, BreakdownComponent } from "@/app/api/procedure-breakdown/route";
 import type { ProcedureSearchResponse, ProcedureSearchResult } from "@/app/api/procedure-search/route";
 import type { HospitalComparisonEntry } from "@/app/api/hospitals/compare/route";
-import type { InsuranceSelection } from "./InsuranceSelector";
+import { InsuranceSelector, type InsuranceSelection } from "./InsuranceSelector";
 import { HospitalCostComparison } from "./HospitalCostComparison";
 import { PhysicianRecommendations } from "./PhysicianRecommendation";
 import { GlossaryTip } from "./GlossaryTip";
@@ -23,7 +23,7 @@ type Phase =
   | "idle"
   | "db-searching"    // fast DB lookup in progress
   | "db-results"      // real chargemaster data found — show hospital comparison
-  | "no-data"         // nothing in DB — prompt user to use AI
+  | "no-data"         // nothing in DB — AI started automatically
   | "ai-loading"      // AI breakdown in progress
   | "ai-results";     // full AI breakdown ready
 
@@ -75,22 +75,21 @@ const SUGGESTIONS: { label: string; query: string }[] = [
 ];
 
 const AI_LOADING_PHASES = [
-  "Figuring out what procedure you need…",
-  "Looking up surgical components and materials…",
-  "Pulling real hospital price data…",
-  "Calculating what you'd actually pay…",
+  "Assessing your condition and identifying procedure…",
+  "Researching clinical guidelines and surgical components…",
+  "Matching components to chargemaster data…",
+  "Calculating your estimated costs…",
 ];
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface Props {
-  insurance?: InsuranceSelection | null;
   onBreakdownReady?: (breakdown: ProcedureBreakdown) => void;
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
+export function AiProcedureSearch({ onBreakdownReady }: Props) {
   const [query, setQuery]               = useState("");
   const [phase, setPhase]               = useState<Phase>("idle");
   const [dbMatches, setDbMatches]       = useState<ProcedureSearchResult[]>([]);
@@ -106,18 +105,27 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
   const [elapsed, setElapsed]           = useState(0);
   const [progress, setProgress]         = useState(0);
 
-  const inputRef     = useRef<HTMLInputElement>(null);
-  const phaseTimers  = useRef<ReturnType<typeof setTimeout>[]>([]);
-  const elapsedTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Insurance — managed internally, shown inline after search
+  const [insurance, setInsurance]       = useState<InsuranceSelection | null>(null);
+  const [showInsurancePicker, setShowInsurancePicker] = useState(false);
+  const [insurancePickerExpanded, setInsurancePickerExpanded] = useState(false);
+
+  const inputRef      = useRef<HTMLInputElement>(null);
+  const phaseTimers   = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const elapsedTimer  = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef      = useRef<AbortController | null>(null);
 
   useEffect(() => () => {
     phaseTimers.current.forEach(clearTimeout);
     if (elapsedTimer.current)  clearInterval(elapsedTimer.current);
     if (progressTimer.current) clearInterval(progressTimer.current);
+    abortRef.current?.abort();
   }, []);
 
   const reset = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
     setPhase("idle");
     setDbMatches([]);
     setSelectedMatch(null);
@@ -127,6 +135,8 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
     setShowBreakdown(false);
     setExpandedIds(new Set());
     setHospitalPrices([]);
+    setShowInsurancePicker(false);
+    setInsurancePickerExpanded(false);
     phaseTimers.current.forEach(clearTimeout);
     if (elapsedTimer.current)  { clearInterval(elapsedTimer.current);  elapsedTimer.current  = null; }
     if (progressTimer.current) { clearInterval(progressTimer.current); progressTimer.current = null; }
@@ -141,6 +151,9 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
     setQuery(trimmed);
     setPhase("db-searching");
     setError(null);
+    // Show insurance picker immediately as soon as search starts
+    setShowInsurancePicker(true);
+    setInsurancePickerExpanded(true);
 
     try {
       const res  = await fetch("/api/procedure-search", {
@@ -160,9 +173,12 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
     } catch {
       setPhase("no-data");
     }
+
+    // Auto-start AI breakdown immediately after DB search
+    void runAiBreakdown(trimmed, insurance);
   };
 
-  // ── Phase 2: optional AI breakdown ────────────────────────────────────────
+  // ── AI loading animation ───────────────────────────────────────────────────
 
   const startAiPhases = useCallback(() => {
     phaseTimers.current.forEach(clearTimeout);
@@ -181,15 +197,23 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
       setProgress(Math.min(90, Math.round(90 * (1 - Math.exp(-3 * t)))));
     }, 200);
 
-    [3000, 6000, 9000].forEach((delay, i) => {
+    [3500, 7000, 10500].forEach((delay, i) => {
       const t = setTimeout(() => setLoadingPhase(i + 1), delay);
       phaseTimers.current.push(t);
     });
   }, []);
 
-  const runAiBreakdown = async (q: string) => {
+  // ── Phase 2: AI breakdown ──────────────────────────────────────────────────
+
+  const runAiBreakdown = async (q: string, ins: InsuranceSelection | null) => {
     const trimmed = q.trim();
     if (!trimmed) return;
+
+    // Abort any in-flight AI call
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setPhase("ai-loading");
     setStreamingText("");
     setBreakdown(null);
@@ -204,10 +228,11 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           query: trimmed,
-          insurerName: insurance?.insurer  ?? null,
-          payerType:   insurance?.payerType ?? null,
+          insurerName: ins?.insurer  ?? null,
+          payerType:   ins?.payerType ?? null,
           coinsurance,
         }),
+        signal: controller.signal,
       });
       if (!res.body) throw new Error("No response body");
 
@@ -235,6 +260,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                 setBreakdown(parsed as ProcedureBreakdown);
                 onBreakdownReady?.(parsed as ProcedureBreakdown);
                 setPhase("ai-results");
+                setInsurancePickerExpanded(false); // collapse picker now that results are shown
               }
               if (currentEvent === "error") throw new Error((parsed as { message: string }).message);
             } catch (e) {
@@ -244,6 +270,8 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
         }
       }
     } catch (e) {
+      // AbortError = intentional cancel (user changed insurance), don't show error
+      if (e instanceof Error && e.name === "AbortError") return;
       setError(e instanceof Error ? e.message : "Failed to generate breakdown");
       setPhase(dbMatches.length ? "db-results" : "no-data");
     } finally {
@@ -253,6 +281,16 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
         if (elapsedTimer.current)  { clearInterval(elapsedTimer.current);  elapsedTimer.current  = null; }
         if (progressTimer.current) { clearInterval(progressTimer.current); progressTimer.current = null; }
       }, 300);
+    }
+  };
+
+  // ── Insurance change handler ───────────────────────────────────────────────
+
+  const handleInsuranceChange = (ins: InsuranceSelection | null) => {
+    setInsurance(ins);
+    // If AI is running or done, restart with new insurance selection
+    if (phase === "ai-loading" || phase === "ai-results") {
+      void runAiBreakdown(query, ins);
     }
   };
 
@@ -294,16 +332,16 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && searchDb(query)}
-          placeholder="What do you need? e.g. 'knee replacement', 'ACL reconstruction', 'colonoscopy'…"
+          placeholder="Describe your condition or procedure — e.g. 'non-union ankle fracture', 'torn ACL', 'colonoscopy'…"
           className="flex-1 bg-transparent text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none"
-          disabled={phase === "db-searching" || phase === "ai-loading"}
+          disabled={phase === "db-searching"}
         />
         <button
           onClick={() => searchDb(query)}
-          disabled={phase === "db-searching" || phase === "ai-loading" || !query.trim()}
+          disabled={phase === "db-searching" || !query.trim()}
           className="shrink-0 rounded-xl bg-violet-700 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {phase === "db-searching" ? "Searching…" : phase === "ai-loading" ? "Analyzing…" : "Search"}
+          {phase === "db-searching" ? "Searching…" : "Search"}
         </button>
       </div>
 
@@ -319,6 +357,67 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
               {s.label}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* ── Inline insurance picker (appears immediately on search) ── */}
+      {showInsurancePicker && phase !== "idle" && (
+        <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+          <button
+            onClick={() => setInsurancePickerExpanded((v) => !v)}
+            className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left hover:bg-neutral-50 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <ShieldCheck className={cn("size-5 shrink-0", insurance ? "text-violet-600" : "text-neutral-300")} />
+              <div>
+                {insurance ? (
+                  <>
+                    <p className="text-xs text-neutral-400 font-medium">Insurance selected</p>
+                    <p className="text-sm font-semibold text-violet-700">{insurance.displayLabel}</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs font-semibold text-violet-700">Add your insurance while we work</p>
+                    <p className="text-xs text-neutral-400 mt-0.5">
+                      {phase === "ai-loading"
+                        ? "AI is analyzing your case — add insurance to see what you'd actually pay"
+                        : "We'll update your costs once you select a plan"}
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {insurance && (
+                <span
+                  role="button"
+                  onClick={(e) => { e.stopPropagation(); handleInsuranceChange(null); }}
+                  className="flex items-center gap-1 rounded-full border border-neutral-200 px-2.5 py-0.5 text-xs text-neutral-400 hover:text-red-500 hover:border-red-200"
+                >
+                  <X className="size-3" /> Remove
+                </span>
+              )}
+              {!insurance && (
+                <span className="rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white">
+                  Add insurance
+                </span>
+              )}
+              {insurancePickerExpanded
+                ? <ChevronUp className="size-4 text-neutral-400" />
+                : <ChevronDown className="size-4 text-neutral-400" />
+              }
+            </div>
+          </button>
+
+          {insurancePickerExpanded && (
+            <div className="border-t border-neutral-100 px-5 pb-5 pt-4">
+              <InsuranceSelector
+                value={insurance}
+                onChange={handleInsuranceChange}
+                onDone={() => setInsurancePickerExpanded(false)}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -348,30 +447,20 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
         </div>
       )}
 
-      {/* ── No data state ── */}
+      {/* ── No data state — AI already started ── */}
       {phase === "no-data" && (
         <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
-          <div className="flex flex-col items-center gap-4 px-8 py-10 text-center">
+          <div className="flex flex-col items-center gap-3 px-8 py-8 text-center">
             <div className="flex size-14 items-center justify-center rounded-full bg-neutral-100">
               <FileX className="size-7 text-neutral-400" />
             </div>
             <div>
-              <p className="text-base font-bold text-neutral-800">No chargemaster data found</p>
+              <p className="text-base font-bold text-neutral-800">No exact chargemaster match</p>
               <p className="mt-1 max-w-sm text-sm text-neutral-500 leading-relaxed">
-                Our uploaded hospital price files don&apos;t have a match for &ldquo;{query}&rdquo;.
-                You can use AI to estimate what this procedure typically costs at Manhattan hospitals.
+                Our uploaded hospital files don&apos;t have a direct match for &ldquo;{query}&rdquo;.
+                AI is building a detailed estimate using clinical guidelines and Manhattan market rates.
               </p>
             </div>
-            <button
-              onClick={() => runAiBreakdown(query)}
-              className="flex items-center gap-2 rounded-xl bg-violet-700 px-6 py-3 text-sm font-semibold text-white shadow-sm transition-all hover:bg-violet-800"
-            >
-              <Sparkles className="size-4" />
-              Estimate with AI
-            </button>
-            <p className="text-xs text-neutral-400">
-              AI estimates are based on Manhattan market rates — not official hospital records
-            </p>
           </div>
         </div>
       )}
@@ -455,7 +544,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
           <HospitalCostComparison
             cptCode={selectedMatch.cptCode}
             procedureName={selectedMatch.name}
-            insurance={insurance ?? null}
+            insurance={insurance}
             coinsurance={coinsurance}
             onPricesLoaded={setHospitalPrices}
           />
@@ -464,29 +553,9 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
           <PhysicianRecommendations
             procedureName={selectedMatch.name}
             cptCode={selectedMatch.cptCode}
-            insurance={insurance ?? null}
+            insurance={insurance}
             hospitalPrices={hospitalPrices}
           />
-
-          {/* AI estimate upgrade CTA — only when not already in AI flow */}
-          {phase === "db-results" && (
-            <div className="flex items-center justify-between gap-4 rounded-2xl border border-violet-100 bg-violet-50 px-6 py-4">
-              <div>
-                <p className="text-sm font-bold text-violet-900">Want a full cost breakdown?</p>
-                <p className="text-xs text-violet-600 mt-0.5">
-                  See every line item — surgeon fee, anesthesia, implants, medications, follow-up — with AI-powered estimates for each.
-                </p>
-              </div>
-              <button
-                onClick={() => runAiBreakdown(query)}
-                className="shrink-0 flex items-center gap-2 rounded-xl bg-violet-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-violet-800"
-              >
-                <Sparkles className="size-4" />
-                Full breakdown
-                <ArrowRight className="size-3.5" />
-              </button>
-            </div>
-          )}
         </>
       )}
 
@@ -498,7 +567,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
               <div className="flex items-center gap-2">
                 <Loader2 className="size-4 animate-spin text-violet-400 shrink-0" />
                 <p className="text-sm font-semibold text-white">
-                  {streamingText ? "Analyzing procedure costs…" : AI_LOADING_PHASES[loadingPhase]}
+                  {streamingText ? "Building your cost estimate…" : AI_LOADING_PHASES[loadingPhase]}
                 </p>
               </div>
               <span className="text-xs text-white/40 tabular-nums">{elapsed}s</span>
@@ -517,7 +586,11 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                 </p>
               </div>
             ) : (
-              <p className="mt-2 text-xs text-white/40">AI is analyzing procedure costs across Manhattan hospitals…</p>
+              <p className="mt-2 text-xs text-white/40">
+                {insurance
+                  ? `Applying ${insurance.displayLabel} rates to your estimate…`
+                  : "Add insurance above to see what you'd actually pay — we'll update instantly when you do"}
+              </p>
             )}
           </div>
           <div className="px-6 py-5 space-y-3">
@@ -540,7 +613,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
         </div>
       )}
 
-      {/* ── AI results — full component breakdown ── */}
+      {/* ── AI results ── */}
       {phase === "ai-results" && breakdown && (
         <>
           {/* Procedure identification card */}
@@ -621,7 +694,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
             <HospitalCostComparison
               cptCode={breakdown.cptCode}
               procedureName={breakdown.procedureName}
-              insurance={insurance ?? null}
+              insurance={insurance}
               coinsurance={coinsurance}
               episodeTotals={{
                 insLow:   breakdown.insuranceTotalLow,
@@ -638,22 +711,135 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
           <PhysicianRecommendations
             procedureName={breakdown.procedureName}
             cptCode={breakdown.cptCode ?? null}
-            insurance={insurance ?? null}
+            insurance={insurance}
             hospitalPrices={hospitalPrices}
           />
 
-          {/* Component breakdown (expandable) */}
-          <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+          {/* ── Bill Summary Card — always visible, click to expand itemized ── */}
+          <div className="overflow-hidden rounded-2xl border-2 border-violet-200 bg-white shadow-md">
+
+            {/* Total header */}
+            <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-5">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Receipt className="size-4 text-violet-400" />
+                    <p className="text-xs font-semibold uppercase tracking-wider text-white/50">
+                      Your Estimated Bill
+                    </p>
+                    {breakdown.dataCompleteness != null && (
+                      <span className={cn(
+                        "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                        breakdown.dataCompleteness > 0.5
+                          ? "bg-green-500/20 text-green-300"
+                          : "bg-amber-500/20 text-amber-300"
+                      )}>
+                        {Math.round(breakdown.dataCompleteness * 100)}% real data
+                      </span>
+                    )}
+                  </div>
+
+                  {showInsurance && breakdown.insuranceTotalLow != null ? (
+                    <>
+                      <p className="text-3xl font-black text-white">
+                        {fmtRange(
+                          Math.round(breakdown.insuranceTotalLow  * coinsurance),
+                          Math.round((breakdown.insuranceTotalHigh ?? 0) * coinsurance),
+                        )}
+                      </p>
+                      <p className="text-sm text-white/60 mt-1">
+                        your estimated out-of-pocket cost
+                        {insurance ? ` with ${insurance.displayLabel}` : ""}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-3xl font-black text-white">
+                        {fmtRange(breakdown.cashTotalLow, breakdown.cashTotalHigh)}
+                      </p>
+                      <p className="text-sm text-white/60 mt-1">
+                        {insurance?.payerType === "cash" ? "cash / self-pay price" : "estimated cost — add insurance for personalized pricing"}
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                {!insurance && (
+                  <button
+                    onClick={() => { setInsurancePickerExpanded(true); }}
+                    className="shrink-0 rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-xs font-semibold text-white/80 hover:bg-white/20 transition-colors"
+                  >
+                    Add insurance →
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Three-column price summary */}
+            <div className={cn(
+              "grid divide-x divide-neutral-100 border-b border-neutral-100",
+              showInsurance ? "grid-cols-3" : "grid-cols-2"
+            )}>
+              <div className="px-5 py-4">
+                <p className="text-xs text-neutral-400 mb-1">List price (chargemaster)</p>
+                <p className="font-mono text-sm font-bold text-neutral-600">
+                  {fmtRange(breakdown.chargemasterTotalLow, breakdown.chargemasterTotalHigh)}
+                </p>
+              </div>
+              {showInsurance && (
+                <div className="px-5 py-4">
+                  <p className="text-xs text-neutral-400 mb-1">Insurance pays</p>
+                  <p className="font-mono text-sm font-bold text-violet-700">
+                    {breakdown.insuranceTotalLow != null
+                      ? fmtRange(
+                          Math.round(breakdown.insuranceTotalLow  * (1 - coinsurance)),
+                          Math.round((breakdown.insuranceTotalHigh ?? 0) * (1 - coinsurance)),
+                        )
+                      : <span className="text-neutral-300">Add insurance above</span>
+                    }
+                  </p>
+                </div>
+              )}
+              <div className="px-5 py-4">
+                <p className="text-xs text-neutral-400 mb-1">Without insurance</p>
+                <p className="font-mono text-sm font-bold text-neutral-600">
+                  {fmtRange(breakdown.cashTotalLow, breakdown.cashTotalHigh)}
+                </p>
+              </div>
+            </div>
+
+            {/* Insurance covers callout */}
+            {showInsurance && breakdown.insuranceTotalLow != null && coinsurance < 1 && (
+              <div className="mx-5 my-4 flex items-center justify-between gap-4 rounded-xl border border-violet-200 bg-violet-50 px-5 py-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-violet-600">Your insurance picks up</p>
+                  <p className="text-xl font-bold text-violet-800 mt-0.5">
+                    {fmtRange(
+                      Math.round((breakdown.insuranceTotalLow  ?? 0) * (1 - coinsurance)),
+                      Math.round((breakdown.insuranceTotalHigh ?? 0) * (1 - coinsurance)),
+                    )}
+                  </p>
+                </div>
+                <p className="text-sm text-violet-600 text-right">
+                  {Math.round((1 - coinsurance) * 100)}% covered
+                  {breakdown.insurerName ? ` by ${breakdown.insurerName}` : ""}
+                </p>
+              </div>
+            )}
+
+            {/* Expand itemized button */}
             <button
               onClick={() => setShowBreakdown((v) => !v)}
-              className="flex w-full items-center justify-between gap-4 px-6 py-4 text-left transition-colors hover:bg-neutral-50"
+              className="flex w-full items-center justify-between gap-4 px-6 py-4 text-left transition-colors hover:bg-neutral-50 border-t border-neutral-100"
             >
               <div className="flex items-center gap-3">
                 <ListCollapse className="size-4 text-neutral-400 shrink-0" />
                 <div>
-                  <p className="text-sm font-bold text-neutral-800">What&apos;s actually being billed?</p>
+                  <p className="text-sm font-bold text-neutral-800">
+                    {showBreakdown ? "Hide" : "See"} itemized breakdown
+                  </p>
                   <p className="text-xs text-neutral-400 mt-0.5">
-                    Every line item — surgeon, anesthesia, implants, medications, follow-up
+                    {breakdown.components.length} line items — surgeon, anesthesia, implants, medications, follow-up
                   </p>
                 </div>
               </div>
@@ -663,6 +849,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
               }
             </button>
 
+            {/* Expandable itemized table */}
             {showBreakdown && (
               <div className="border-t border-neutral-100">
                 {/* Chargemaster explainer */}
@@ -779,60 +966,6 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                     );
                   })}
                 </div>
-
-                {/* Total row */}
-                <div
-                  className="grid items-end gap-0 border-t-2 border-neutral-200 bg-neutral-50 px-6 py-4"
-                  style={{ gridTemplateColumns: showInsurance ? "1fr 130px 130px 120px 120px" : "1fr 140px 140px" }}
-                >
-                  <div>
-                    <p className="text-sm font-bold text-neutral-900">Total estimate</p>
-                    <p className="text-xs text-neutral-400">All components</p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-neutral-400 mb-0.5">List price</p>
-                    <p className="font-mono text-sm font-bold text-neutral-600">{fmtRange(breakdown.chargemasterTotalLow, breakdown.chargemasterTotalHigh)}</p>
-                  </div>
-                  {showInsurance && (
-                    <div className="text-right">
-                      <p className="text-xs text-neutral-400 mb-0.5">Insurance pays</p>
-                      <p className="font-mono text-sm font-bold text-violet-700">{breakdown.insuranceTotalLow != null ? fmtRange(breakdown.insuranceTotalLow, breakdown.insuranceTotalHigh) : "—"}</p>
-                    </div>
-                  )}
-                  {showInsurance && (
-                    <div className="text-right">
-                      <p className="text-xs text-violet-600 font-semibold mb-0.5">Your estimated cost</p>
-                      <p className="font-mono text-lg font-extrabold text-neutral-900">
-                        {breakdown.insuranceTotalLow != null
-                          ? fmtRange(Math.round(breakdown.insuranceTotalLow * coinsurance), Math.round((breakdown.insuranceTotalHigh ?? 0) * coinsurance))
-                          : "—"}
-                      </p>
-                    </div>
-                  )}
-                  <div className="text-right">
-                    <p className="text-xs text-neutral-400 mb-0.5">No insurance</p>
-                    <p className="font-mono text-sm font-bold text-neutral-600">{fmtRange(breakdown.cashTotalLow, breakdown.cashTotalHigh)}</p>
-                  </div>
-                </div>
-
-                {/* Insurance covers callout */}
-                {showInsurance && breakdown.insuranceTotalLow != null && coinsurance < 1 && (
-                  <div className="mx-6 mb-5 flex items-center justify-between gap-4 rounded-xl border border-violet-200 bg-violet-50 px-5 py-3">
-                    <div>
-                      <p className="text-xs font-semibold uppercase tracking-wide text-violet-600">Your insurance picks up</p>
-                      <p className="text-xl font-bold text-violet-800 mt-0.5">
-                        {fmtRange(
-                          Math.round((breakdown.insuranceTotalLow  ?? 0) * (1 - coinsurance)),
-                          Math.round((breakdown.insuranceTotalHigh ?? 0) * (1 - coinsurance)),
-                        )}
-                      </p>
-                    </div>
-                    <p className="text-sm text-violet-600">
-                      Your insurance covers {Math.round((1 - coinsurance) * 100)}% of the bill
-                      {breakdown.insurerName ? ` (${breakdown.insurerName})` : ""} — you pay the rest
-                    </p>
-                  </div>
-                )}
 
                 {/* Disclaimer */}
                 <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-4">
