@@ -4,7 +4,7 @@ import { anthropicStream } from "@/lib/anthropic-fetch";
 import { redis } from "@/lib/redis";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -290,7 +290,7 @@ Return a complete JSON breakdown:
       "id": "1",
       "name": "Specific component name (e.g. 'Titanium Locking Plate' not 'Hardware')",
       "category": "One of: ${CATEGORY_LIST.join(" | ")}",
-      "description": "What this charge covers and why it is needed",
+      "description": "One sentence: what this charge covers",
       "cptCode": "CPT code if applicable, else empty string",
       "hcpcsCode": "HCPCS L/C code for devices if applicable, else empty string",
       "chargemasterLow": <integer USD — hospital list price lower bound>,
@@ -299,7 +299,7 @@ Return a complete JSON breakdown:
       "insuranceHigh": <integer USD — in-network rate upper bound, or null if unknown>,
       "cashLow": <integer USD — self-pay lower bound>,
       "cashHigh": <integer USD — self-pay upper bound>,
-      "notes": "Key cost driver, or empty string",
+      "notes": "Key cost driver note, or empty string",
       "dataSource": "real" or "estimated"
     }
   ],
@@ -321,7 +321,7 @@ and follow-up visits.`;
       const text = await anthropicStream(
         {
           model: "claude-haiku-4-5-20251001",
-          max_tokens: 3000,
+          max_tokens: 2500,
           cacheSystemPrompt: true,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
