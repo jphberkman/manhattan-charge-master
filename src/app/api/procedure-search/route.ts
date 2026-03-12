@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
+import { searchCptCodes } from "@/lib/cpt-lookup";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,32 @@ function looksLikeCptCode(query: string): boolean {
   return /^\d{4,5}[A-Z]?$/i.test(query.trim());
 }
 
+/** Scores and filters procedure results by keyword relevance. */
+function scoreAndFilter(
+  procedures: { id: string; cptCode: string; name: string; category: string; _count: { prices: number } }[],
+  hospitalCountMap: Record<string, number>,
+  keywords: string[],
+  minScore: number,
+): ProcedureSearchResult[] {
+  return procedures
+    .map((p) => {
+      const nameLower = p.name.toLowerCase();
+      const matchScore = keywords.length
+        ? keywords.filter((kw) => nameLower.includes(kw.toLowerCase())).length
+        : 1; // CPT-code or NLM lookups — treat all as full match
+      return {
+        cptCode: p.cptCode,
+        name: p.name,
+        category: p.category,
+        priceCount: p._count.prices,
+        hospitalCount: hospitalCountMap[p.id] ?? 0,
+        matchScore,
+      };
+    })
+    .filter((r) => r.priceCount > 0 && r.matchScore >= minScore)
+    .sort((a, b) => b.matchScore - a.matchScore || b.priceCount - a.priceCount);
+}
+
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -53,12 +80,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  const cacheKey = `search2:${query.trim().toLowerCase()}`;
+  const cacheKey = `search3:${query.trim().toLowerCase()}`;
   const cached = await redis.get<ProcedureSearchResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
-  // 1. Find matching procedures in the DB
-  const procedures = await prisma.procedure.findMany({
+  // ── Pass 1: keyword / CPT-code search in our chargemaster DB ──────────────
+  const pass1 = await prisma.procedure.findMany({
     where: isCptQuery
       ? { cptCode: { contains: query.trim(), mode: "insensitive" } }
       : { OR: keywords.map((w) => ({ name: { contains: w, mode: "insensitive" as const } })) },
@@ -72,52 +99,70 @@ export async function POST(req: NextRequest) {
     take: 20,
   });
 
-  if (!procedures.length) {
-    return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
+  if (pass1.length) {
+    const hospitalCounts = await prisma.priceEntry.groupBy({
+      by: ["procedureId"],
+      where: { procedureId: { in: pass1.map((p) => p.id) } },
+      _count: { hospitalId: true },
+    });
+    const hospitalCountMap = Object.fromEntries(
+      hospitalCounts.map((h) => [h.procedureId, h._count.hospitalId]),
+    );
+
+    const minScore = keywords.length >= 3 ? 2 : 1;
+    const results = scoreAndFilter(pass1, hospitalCountMap, keywords, minScore);
+
+    if (results.length) {
+      const response: ProcedureSearchResponse = { procedures: results, noData: false };
+      await redis.set(cacheKey, response, { ex: 3600 });
+      return NextResponse.json(response);
+    }
   }
 
-  // 2. Get distinct hospital counts — select distinct hospitalIds per procedure
-  const hospitalCounts = await prisma.priceEntry.groupBy({
-    by: ["procedureId"],
-    where: { procedureId: { in: procedures.map((p) => p.id) } },
-    _count: { hospitalId: true },
-  });
+  // ── Pass 2: NLM CPT lookup — maps natural language to CPT codes ────────────
+  // Runs when keyword search finds nothing (e.g. user says "gallstones" but
+  // our DB has "cholecystectomy"). NLM resolves the clinical concept to CPT
+  // codes, then we retry the DB with exact code matches.
+  if (!isCptQuery) {
+    const nlmMatches = await searchCptCodes(query, 8);
 
-  const hospitalCountMap = Object.fromEntries(
-    hospitalCounts.map((h) => [h.procedureId, h._count.hospitalId]),
-  );
+    if (nlmMatches.length) {
+      const nlmCptCodes = nlmMatches.map((m) => m.code);
 
-  // 3. Score each procedure by how many query keywords appear in its name.
-  //    For complex queries (3+ keywords), only return procedures that match ≥2 keywords.
-  //    This prevents an "ankle X-ray" code from surfacing when the user describes
-  //    a surgical condition like "non-union ankle fracture" (only "ankle" would match).
-  const minScore = keywords.length >= 3 ? 2 : 1;
+      const pass2 = await prisma.procedure.findMany({
+        where: { cptCode: { in: nlmCptCodes } },
+        select: {
+          id: true,
+          cptCode: true,
+          name: true,
+          category: true,
+          _count: { select: { prices: true } },
+        },
+        take: 20,
+      });
 
-  const scored = procedures
-    .map((p) => {
-      const nameLower  = p.name.toLowerCase();
-      const matchScore = keywords.filter((kw) => nameLower.includes(kw.toLowerCase())).length;
-      return {
-        cptCode:       p.cptCode,
-        name:          p.name,
-        category:      p.category,
-        priceCount:    p._count.prices,
-        hospitalCount: hospitalCountMap[p.id] ?? 0,
-        matchScore,
-      };
-    })
-    .filter((r) => r.priceCount > 0 && r.matchScore >= minScore);
+      if (pass2.length) {
+        const hospitalCounts = await prisma.priceEntry.groupBy({
+          by: ["procedureId"],
+          where: { procedureId: { in: pass2.map((p) => p.id) } },
+          _count: { hospitalId: true },
+        });
+        const hospitalCountMap = Object.fromEntries(
+          hospitalCounts.map((h) => [h.procedureId, h._count.hospitalId]),
+        );
 
-  // Sort: highest match score first, then by price count (most data)
-  const results: ProcedureSearchResult[] = scored.sort(
-    (a, b) => b.matchScore - a.matchScore || b.priceCount - a.priceCount,
-  );
+        // NLM matches are pre-scored by relevance — treat all as full match
+        const results = scoreAndFilter(pass2, hospitalCountMap, [], 1);
 
-  if (!results.length) {
-    return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
+        if (results.length) {
+          const response: ProcedureSearchResponse = { procedures: results, noData: false };
+          await redis.set(cacheKey, response, { ex: 3600 });
+          return NextResponse.json(response);
+        }
+      }
+    }
   }
 
-  const response: ProcedureSearchResponse = { procedures: results, noData: false };
-  await redis.set(cacheKey, response, { ex: 3600 }); // 1h — refreshes on data upload
-  return NextResponse.json(response);
+  // ── No data found in either pass ─────────────────────────────────────────
+  return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
 }

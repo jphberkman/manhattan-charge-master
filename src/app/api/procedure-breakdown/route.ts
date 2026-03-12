@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { anthropicStream } from "@/lib/anthropic-fetch";
 import { redis } from "@/lib/redis";
+import { searchCptCodes } from "@/lib/cpt-lookup";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -112,28 +113,60 @@ function byCode(
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
-/** Broad pre-query: fetches real chargemaster price ranges for procedures matching the query. */
-async function fetchChargemasterData(query: string): Promise<CptPriceMap> {
+/**
+ * Broad pre-query: fetches real chargemaster price ranges for procedures matching the query.
+ * Pass 1: keyword search in our DB.
+ * Pass 2: NLM CPT API lookup → retry DB by exact CPT codes (handles symptom descriptions).
+ * Returns { priceMap, nlmHint } — nlmHint is the top NLM CPT match for the AI prompt.
+ */
+async function fetchChargemasterData(
+  query: string,
+): Promise<{ priceMap: CptPriceMap; nlmHint: string | null }> {
   const words = query
     .trim()
     .split(/\s+/)
     .filter((w) => w.length > 3)
     .slice(0, 6);
 
-  if (!words.length) return {};
+  // Run keyword DB search and NLM CPT lookup in parallel
+  const [keywordProcedures, nlmMatches] = await Promise.all([
+    words.length
+      ? prisma.procedure.findMany({
+          where: { OR: words.map((w) => ({ name: { contains: w, mode: "insensitive" as const } })) },
+          select: {
+            cptCode: true,
+            name: true,
+            prices: { select: { priceInCents: true, priceType: true, payerType: true } },
+          },
+          take: 40,
+        })
+      : Promise.resolve([]),
+    searchCptCodes(query, 5),
+  ]);
 
-  // Single query with include — avoids 2 sequential round-trips (saves 10-15s on Neon cold-start)
-  const procedures = await prisma.procedure.findMany({
-    where: { OR: words.map((w) => ({ name: { contains: w, mode: "insensitive" as const } })) },
-    select: {
-      cptCode: true,
-      name: true,
-      prices: { select: { priceInCents: true, priceType: true, payerType: true } },
-    },
-    take: 40,
-  });
+  // NLM hint: top match description for the AI prompt
+  const nlmHint = nlmMatches.length
+    ? `NLM CPT lookup suggests: CPT ${nlmMatches[0].code} — ${nlmMatches[0].description}`
+    : null;
 
-  if (!procedures.length) return {};
+  // Pass 2: if keyword search missed, look up by NLM CPT codes
+  const nlmCptCodes = nlmMatches.map((m) => m.code);
+  const nlmProcedures =
+    nlmCptCodes.length && keywordProcedures.length === 0
+      ? await prisma.procedure.findMany({
+          where: { cptCode: { in: nlmCptCodes } },
+          select: {
+            cptCode: true,
+            name: true,
+            prices: { select: { priceInCents: true, priceType: true, payerType: true } },
+          },
+          take: 40,
+        })
+      : [];
+
+  const procedures = keywordProcedures.length ? keywordProcedures : nlmProcedures;
+
+  if (!procedures.length) return { priceMap: {}, nlmHint };
 
   const buckets: Record<string, { name: string; gross: number[]; negotiated: number[]; cash: number[] }> = {};
 
@@ -148,7 +181,7 @@ async function fetchChargemasterData(query: string): Promise<CptPriceMap> {
     }
   }
 
-  return Object.fromEntries(
+  const priceMap = Object.fromEntries(
     Object.entries(buckets).map(([cpt, b]) => [
       cpt,
       {
@@ -159,6 +192,8 @@ async function fetchChargemasterData(query: string): Promise<CptPriceMap> {
       },
     ]),
   );
+
+  return { priceMap, nlmHint };
 }
 
 /** Formats the chargemaster map as a human-readable constraint table for the AI prompt.
@@ -217,9 +252,12 @@ export async function POST(req: NextRequest) {
 
       // 2. Pre-load real chargemaster data BEFORE calling AI (5s timeout so a
       //    slow Neon cold-start never blocks the full analysis).
-      const chargemasterData = await Promise.race([
+      //    Runs keyword search + NLM CPT lookup in parallel.
+      const { priceMap: chargemasterData, nlmHint } = await Promise.race([
         fetchChargemasterData(query),
-        new Promise<CptPriceMap>((resolve) => setTimeout(() => resolve({}), 5000)),
+        new Promise<{ priceMap: CptPriceMap; nlmHint: string | null }>(
+          (resolve) => setTimeout(() => resolve({ priceMap: {}, nlmHint: null }), 5000),
+        ),
       ]);
       const chargemasterContext = buildChargemasterContext(chargemasterData);
       const hasDbData = Object.keys(chargemasterData).length > 0;
@@ -268,8 +306,10 @@ IMPORTANT INTERPRETATION RULES:
         : `No chargemaster database matches found for this query.
 Set "dataSource": "estimated" for all components and use realistic Manhattan market rates.`;
 
+      const nlmContext = nlmHint ? `\nCPT CODE HINT (from NLM database): ${nlmHint}` : "";
+
       const userPrompt = `Patient query: "${query}"
-${insurerContext}
+${insurerContext}${nlmContext}
 
 ${chargemasterSection}
 
