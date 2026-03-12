@@ -122,10 +122,6 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
     cashHigh: breakdown.cashTotalHigh,
   } : undefined, [breakdown]);
 
-  const allCptCodes = useMemo(() =>
-    breakdown ? [...new Set(breakdown.components.map((c) => c.cptCode).filter(Boolean))] : undefined,
-  [breakdown]);
-
   const inputRef      = useRef<HTMLInputElement>(null);
   const phaseTimers   = useRef<ReturnType<typeof setTimeout>[]>([]);
   const elapsedTimer  = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -684,7 +680,6 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
             insurance={insurance}
             coinsurance={coinsurance}
             episodeTotals={episodeTotals}
-            allCptCodes={allCptCodes}
             onPricesLoaded={setHospitalPrices}
           />
 
@@ -761,7 +756,6 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
             insurance={insurance}
             coinsurance={coinsurance}
             episodeTotals={episodeTotals}
-            allCptCodes={allCptCodes}
             onPricesLoaded={setHospitalPrices}
           />
           <PhysicianRecommendations

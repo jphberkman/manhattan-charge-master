@@ -160,15 +160,10 @@ export async function GET(req: NextRequest) {
   const episodeInsMedian  = episodeInsLow  && episodeInsHigh  ? Math.round((episodeInsLow  + episodeInsHigh)  / 2) : null;
   const episodeCashMedian = episodeCashLow && episodeCashHigh ? Math.round((episodeCashLow + episodeCashHigh) / 2) : null;
 
-  // All CPT codes from the breakdown components (for multi-code episode summing)
-  const allCptCodesParam = searchParams.get("allCptCodes");
-  const allCptCodes = allCptCodesParam
-    ? [...new Set([cptCode!, ...allCptCodesParam.split(",").filter(Boolean)])]
-    : [cptCode!];
-
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
-  const cacheKey = `compare6:${allCptCodes.sort().join(",")}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
+  const allCptCodes = [cptCode];
+  const cacheKey = `compare7:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
@@ -267,6 +262,14 @@ export async function GET(req: NextRequest) {
 
     let effectiveInsuranceRate = insuranceRate ?? (cashPrice != null ? Math.round(cashPrice * 0.82) : null);
     let effectiveCashPrice     = cashPrice     ?? (insuranceRate != null ? Math.round(insuranceRate * 1.22) : null);
+
+    // Sanity check: cash prices cannot be less than ~60% of negotiated rate in reality.
+    // If we see cash < 60% of insurance, it's a data artifact (wrong CPT code mixed in,
+    // or a fragment entry). Replace with the standard self-pay estimate (insurance * 1.22).
+    if (effectiveCashPrice != null && effectiveInsuranceRate != null &&
+        effectiveCashPrice < effectiveInsuranceRate * 0.60) {
+      effectiveCashPrice = Math.round(effectiveInsuranceRate * 1.22);
+    }
 
     // Detect line-item prices: if the DB price is less than 30% of the AI-estimated
     // episode total, it's almost certainly a single fee (surgeon, facility, etc.) rather
