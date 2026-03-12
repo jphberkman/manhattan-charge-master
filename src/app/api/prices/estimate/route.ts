@@ -3,8 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { anthropicCall } from "@/lib/anthropic-fetch";
 import type { PriceApiEntry } from "@/lib/price-transparency/types";
 
-export const dynamic = "force-dynamic";
-
 // In-memory cache for AI estimates (same procedureId + payerType = same result)
 const estimateCache = new Map<string, { data: unknown[]; ts: number }>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -102,7 +100,9 @@ Rules:
       .sort((a, b) => a.priceUsd - b.priceUsd);
 
     estimateCache.set(cacheKey, { data: entries, ts: Date.now() });
-    return NextResponse.json(entries);
+    return NextResponse.json(entries, {
+      headers: { "Cache-Control": "s-maxage=3600, stale-while-revalidate=86400" },
+    });
   } catch (err) {
     console.error("AI estimate error:", err);
     return NextResponse.json(

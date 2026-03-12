@@ -5,7 +5,6 @@ import { redis } from "@/lib/redis";
 import { getBestMedicareBenchmark } from "@/lib/medicare";
 import type { MedicareBenchmark } from "@/lib/medicare";
 
-export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -165,7 +164,9 @@ export async function GET(req: NextRequest) {
   const allCptCodes = [cptCode];
   const cacheKey = `compare7:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
-  if (cached) return NextResponse.json(cached);
+  if (cached) return NextResponse.json(cached, {
+    headers: { "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800" },
+  });
 
   // Single query with include — avoids 2 sequential round-trips (saves 10-15s on Neon cold-start)
   type PriceRow = {
@@ -402,5 +403,9 @@ Return JSON array:
   const response: CompareResponse = { entries: ranked, medicare };
 
   await redis.set(cacheKey, response, { ex: 86400 });
-  return NextResponse.json(response);
+  return NextResponse.json(response, {
+    headers: {
+      "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800",
+    },
+  });
 }

@@ -45,5 +45,7 @@ export async function GET(request: Request) {
     priceType: e.priceType,
   }));
 
-  return NextResponse.json(data);
+  return NextResponse.json(data, {
+    headers: { "Cache-Control": "s-maxage=3600, stale-while-revalidate=86400" },
+  });
 }
