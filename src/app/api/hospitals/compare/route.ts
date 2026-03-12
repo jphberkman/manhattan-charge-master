@@ -1,101 +1,97 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { anthropicCall } from "@/lib/anthropic-fetch";
+import { redis } from "@/lib/redis";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface HospitalComparisonEntry {
   hospital: { id: string; name: string; address: string };
   chargemasterPrice: number | null;
   insuranceRate: number | null;
-  patientCost: number | null;       // insuranceRate × coinsurance
-  insurerPays: number | null;       // insuranceRate × (1 - coinsurance)
+  patientCost: number | null;
+  insurerPays: number | null;
   cashPrice: number | null;
   payerName: string | null;
+  /**
+   * "real"      — both negotiated and cash come directly from the chargemaster DB.
+   * "partial"   — only one price type (ins or cash) found in the DB.
+   * "estimated" — no DB record; AI-generated estimate.
+   */
+  dataQuality: "real" | "partial" | "estimated";
+  /** Backward-compat alias for dataQuality === "estimated". */
   isAiEstimate: boolean;
   rank: number;
 }
 
-// All major Manhattan hospitals — used as the comparison universe
-const MANHATTAN_HOSPITALS = [
-  { id: "nyu-langone",      name: "NYU Langone Health (Tisch Hospital)",           address: "550 1st Ave, New York, NY 10016" },
-  { id: "nyu-orthopedic",   name: "NYU Langone Orthopedic Hospital",               address: "301 E 17th St, New York, NY 10003" },
-  { id: "nyp-cornell",      name: "NewYork-Presbyterian / Weill Cornell",          address: "525 E 68th St, New York, NY 10065" },
-  { id: "nyp-columbia",     name: "NYP / Columbia University Irving Medical Center", address: "622 W 168th St, New York, NY 10032" },
-  { id: "mount-sinai",      name: "The Mount Sinai Hospital",                      address: "One Gustave L. Levy Pl, New York, NY 10029" },
-  { id: "mount-sinai-west", name: "Mount Sinai West",                              address: "1000 10th Ave, New York, NY 10019" },
-  { id: "msk",              name: "Memorial Sloan Kettering Cancer Center",        address: "1275 York Ave, New York, NY 10065" },
-  { id: "lenox-hill",       name: "Lenox Hill Hospital (Northwell)",               address: "100 E 77th St, New York, NY 10075" },
-  { id: "hss",              name: "Hospital for Special Surgery",                  address: "535 E 70th St, New York, NY 10021" },
-  { id: "bellevue",         name: "Bellevue Hospital Center",                      address: "462 1st Ave, New York, NY 10016" },
-];
+// ── Constants ─────────────────────────────────────────────────────────────────
 
-// Map DB hospital names to canonical list ids
-// Handles exact names, partial names, and pipe-separated compound names from the seeder
+/** All major Manhattan hospitals — the fixed comparison universe. */
+const MANHATTAN_HOSPITALS = [
+  { id: "nyu-langone",      name: "NYU Langone Health (Tisch Hospital)",              address: "550 1st Ave, New York, NY 10016" },
+  { id: "nyu-orthopedic",   name: "NYU Langone Orthopedic Hospital",                  address: "301 E 17th St, New York, NY 10003" },
+  { id: "nyp-cornell",      name: "NewYork-Presbyterian / Weill Cornell",             address: "525 E 68th St, New York, NY 10065" },
+  { id: "nyp-columbia",     name: "NYP / Columbia University Irving Medical Center",  address: "622 W 168th St, New York, NY 10032" },
+  { id: "mount-sinai",      name: "The Mount Sinai Hospital",                         address: "One Gustave L. Levy Pl, New York, NY 10029" },
+  { id: "mount-sinai-west", name: "Mount Sinai West",                                 address: "1000 10th Ave, New York, NY 10019" },
+  { id: "msk",              name: "Memorial Sloan Kettering Cancer Center",           address: "1275 York Ave, New York, NY 10065" },
+  { id: "lenox-hill",       name: "Lenox Hill Hospital (Northwell)",                  address: "100 E 77th St, New York, NY 10075" },
+  { id: "hss",              name: "Hospital for Special Surgery",                     address: "535 E 70th St, New York, NY 10021" },
+  { id: "bellevue",         name: "Bellevue Hospital Center",                         address: "462 1st Ave, New York, NY 10016" },
+] as const;
+
+/** Maps DB hospital names (lowercased) to canonical IDs. Handles exact, partial, and pipe-separated names. */
 const DB_NAME_TO_CANONICAL: Record<string, string> = {
   // NYU Langone
-  "nyu langone health (tisch hospital)":  "nyu-langone",
-  "nyu langone health":                   "nyu-langone",
-  "nyu langone":                          "nyu-langone",
-  "nyu langone orthopedic hospital":      "nyu-orthopedic",
-  "nyu langone orthopedic":               "nyu-orthopedic",
+  "nyu langone health (tisch hospital)":                      "nyu-langone",
+  "nyu langone health":                                       "nyu-langone",
+  "nyu langone":                                              "nyu-langone",
+  "nyu langone orthopedic hospital":                          "nyu-orthopedic",
+  "nyu langone orthopedic":                                   "nyu-orthopedic",
   // NYP / Weill Cornell
-  "newyork-presbyterian weill cornell medical center": "nyp-cornell",
-  "new york-presbyterian weill cornell":  "nyp-cornell",
-  "nyp weill cornell":                    "nyp-cornell",
-  "weill cornell":                        "nyp-cornell",
+  "newyork-presbyterian weill cornell medical center":        "nyp-cornell",
+  "new york-presbyterian weill cornell":                      "nyp-cornell",
+  "nyp weill cornell":                                        "nyp-cornell",
+  "weill cornell":                                            "nyp-cornell",
   // NYP / Columbia
   "newyork-presbyterian columbia university irving medical center": "nyp-columbia",
-  "nyp columbia":                         "nyp-columbia",
-  "columbia university irving medical center": "nyp-columbia",
+  "nyp columbia":                                             "nyp-columbia",
+  "columbia university irving medical center":                "nyp-columbia",
   // Mount Sinai
-  "the mount sinai hospital":             "mount-sinai",
-  "mount sinai hospital":                 "mount-sinai",
-  "mount sinai":                          "mount-sinai",
-  "mount sinai morningside":              "mount-sinai-west",
-  "mount sinai west":                     "mount-sinai-west",
+  "the mount sinai hospital":                                 "mount-sinai",
+  "mount sinai hospital":                                     "mount-sinai",
+  "mount sinai":                                              "mount-sinai",
+  "mount sinai morningside":                                  "mount-sinai-west",
+  "mount sinai west":                                         "mount-sinai-west",
   // MSK
-  "memorial sloan kettering cancer center": "msk",
-  "memorial sloan-kettering":             "msk",
-  "msk":                                  "msk",
+  "memorial sloan kettering cancer center":                   "msk",
+  "memorial sloan-kettering":                                 "msk",
+  "msk":                                                      "msk",
   // HSS
-  "hospital for special surgery":         "hss",
-  "hss":                                  "hss",
+  "hospital for special surgery":                             "hss",
+  "hss":                                                      "hss",
   // Lenox Hill / Northwell
-  "lenox hill hospital":                  "lenox-hill",
-  "lenox hill hospital (northwell)":      "lenox-hill",
-  "northwell lenox hill":                 "lenox-hill",
+  "lenox hill hospital":                                      "lenox-hill",
+  "lenox hill hospital (northwell)":                          "lenox-hill",
+  "northwell lenox hill":                                     "lenox-hill",
   // Bellevue / NYC H+H
-  "bellevue hospital center":             "bellevue",
-  "bellevue hospital":                    "bellevue",
-  "nyc health + hospitals":               "bellevue",
-  "nyc health and hospitals":             "bellevue",
-  "new york city health and hospitals":   "bellevue",
+  "bellevue hospital center":                                 "bellevue",
+  "bellevue hospital":                                        "bellevue",
+  "nyc health + hospitals":                                   "bellevue",
+  "nyc health and hospitals":                                 "bellevue",
+  "new york city health and hospitals":                       "bellevue",
 };
 
-// For compound pipe-separated names (e.g. from NYP multi-hospital files),
-// try to match any segment against the canonical map
-function resolveCanonicalId(rawName: string): string | null {
-  const lower = rawName.toLowerCase().trim();
-  // Direct lookup first
-  if (DB_NAME_TO_CANONICAL[lower]) return DB_NAME_TO_CANONICAL[lower];
-  // Pipe-separated compound name — try each segment
-  if (lower.includes("|")) {
-    for (const segment of lower.split("|")) {
-      const s = segment.trim();
-      if (DB_NAME_TO_CANONICAL[s]) return DB_NAME_TO_CANONICAL[s];
-      // Partial keyword match
-      const match = Object.entries(DB_NAME_TO_CANONICAL).find(([k]) => s.includes(k) || k.includes(s));
-      if (match) return match[1];
-    }
-  }
-  // Partial keyword match on full name
-  const partial = Object.entries(DB_NAME_TO_CANONICAL).find(([k]) => lower.includes(k) || k.includes(lower));
-  return partial ? partial[1] : null;
-}
-
-// Sanity-check: minimum believable price for a full procedure (filters fee-schedule fragments)
+/**
+ * Minimum believable price for a full procedure.
+ * Filters out fee-schedule fragments (e.g. a single CPT line-item at $12).
+ */
 const MIN_PROCEDURE_PRICE = 500;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function median(arr: number[]): number {
   if (!arr.length) return 0;
@@ -104,21 +100,70 @@ function median(arr: number[]): number {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const cptCode = searchParams.get("cptCode");
-  const payerType = searchParams.get("payerType");
-  const payerName = searchParams.get("payerName");
-  const coinsurance = parseFloat(searchParams.get("coinsurance") ?? "0.20");
+/** Resolves a raw DB hospital name to a canonical ID. Handles pipe-separated compound names. */
+function resolveCanonicalId(rawName: string): string | null {
+  const lower = rawName.toLowerCase().trim();
 
-  if (!cptCode) {
-    return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
+  if (DB_NAME_TO_CANONICAL[lower]) return DB_NAME_TO_CANONICAL[lower];
+
+  if (lower.includes("|")) {
+    for (const segment of lower.split("|")) {
+      const s = segment.trim();
+      if (DB_NAME_TO_CANONICAL[s]) return DB_NAME_TO_CANONICAL[s];
+      const match = Object.entries(DB_NAME_TO_CANONICAL).find(([k]) => s.includes(k) || k.includes(s));
+      if (match) return match[1];
+    }
   }
 
-  // 1. Look up the procedure (optional — AI fallback works without it)
-  const procedure = await prisma.procedure.findUnique({ where: { cptCode } });
+  const partial = Object.entries(DB_NAME_TO_CANONICAL).find(
+    ([k]) => lower.includes(k) || k.includes(lower),
+  );
+  return partial ? partial[1] : null;
+}
 
-  // 2. Fetch DB price entries if procedure exists
+function sortValue(e: Omit<HospitalComparisonEntry, "rank">): number {
+  return e.patientCost ?? e.cashPrice ?? Infinity;
+}
+
+// ── Route handler ─────────────────────────────────────────────────────────────
+
+export async function GET(req: NextRequest) {
+  const { searchParams } = new URL(req.url);
+  const cptCode    = searchParams.get("cptCode");
+  const payerType  = searchParams.get("payerType");
+  const payerName  = searchParams.get("payerName");
+  const coinsurance = parseFloat(searchParams.get("coinsurance") ?? "0.20");
+
+  // Episode totals passed from the breakdown — used ONLY as an anchor for AI estimates
+  // when real DB data doesn't exist. Never used to distort real DB prices.
+  const episodeInsLow   = searchParams.get("episodeInsLow")   ? parseInt(searchParams.get("episodeInsLow")!)   : null;
+  const episodeInsHigh  = searchParams.get("episodeInsHigh")  ? parseInt(searchParams.get("episodeInsHigh")!)  : null;
+  const episodeCashLow  = searchParams.get("episodeCashLow")  ? parseInt(searchParams.get("episodeCashLow")!)  : null;
+  const episodeCashHigh = searchParams.get("episodeCashHigh") ? parseInt(searchParams.get("episodeCashHigh")!) : null;
+  const episodeInsMedian  = episodeInsLow  && episodeInsHigh  ? Math.round((episodeInsLow  + episodeInsHigh)  / 2) : null;
+  const episodeCashMedian = episodeCashLow && episodeCashHigh ? Math.round((episodeCashLow + episodeCashHigh) / 2) : null;
+
+  // All CPT codes from the breakdown components (for multi-code episode summing)
+  const allCptCodesParam = searchParams.get("allCptCodes");
+  const allCptCodes = allCptCodesParam
+    ? [...new Set([cptCode!, ...allCptCodesParam.split(",").filter(Boolean)])]
+    : [cptCode!];
+
+  if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
+
+  const cacheKey = `compare3:${allCptCodes.sort().join(",")}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}|${episodeInsMedian ?? ""}|${episodeCashMedian ?? ""}`;
+  const cached = await redis.get<HospitalComparisonEntry[]>(cacheKey);
+  if (cached) return NextResponse.json(cached);
+
+  // 1. Look up procedures by all CPT codes
+  const procedures = await prisma.procedure.findMany({
+    where: { cptCode: { in: allCptCodes } },
+    select: { id: true, cptCode: true, name: true },
+  });
+  const procedure = procedures.find((p) => p.cptCode === cptCode) ?? null;
+  const procedureIds = procedures.map((p) => p.id);
+
+  // 2. Fetch all DB price entries for matched procedures
   type PriceRow = {
     hospital: { id: string; name: string; address: string };
     payerName: string;
@@ -127,15 +172,14 @@ export async function GET(req: NextRequest) {
     priceType: string;
   };
 
-  let dbEntries: PriceRow[] = [];
-  if (procedure) {
-    dbEntries = await prisma.priceEntry.findMany({
-      where: { procedureId: procedure.id },
-      include: { hospital: { select: { id: true, name: true, address: true } } },
-    });
-  }
+  const dbEntries: PriceRow[] = procedureIds.length
+    ? await prisma.priceEntry.findMany({
+        where: { procedureId: { in: procedureIds } },
+        include: { hospital: { select: { id: true, name: true, address: true } } },
+      })
+    : [];
 
-  // 3. Build per-canonical-hospital map from DB data
+  // 3. Group price entries by canonical hospital ID
   type HospMap = {
     hospital: { id: string; name: string; address: string };
     grossPrices: number[];
@@ -148,15 +192,12 @@ export async function GET(req: NextRequest) {
 
   for (const e of dbEntries) {
     const price = e.priceInCents / 100;
-    if (price < MIN_PROCEDURE_PRICE) continue; // filter out fee-schedule fragments
+    if (price < MIN_PROCEDURE_PRICE) continue;
 
-    // Map to canonical hospital id (handles exact, partial, and pipe-separated names)
-    const canonicalId = resolveCanonicalId(e.hospital.name);
-
-    // Use canonical id if available, else hospital's own DB id
-    const key = canonicalId ?? e.hospital.id;
+    const canonicalId  = resolveCanonicalId(e.hospital.name);
+    const key          = canonicalId ?? e.hospital.id;
     const canonicalHosp = canonicalId
-      ? MANHATTAN_HOSPITALS.find((h) => h.id === canonicalId) ?? e.hospital
+      ? (MANHATTAN_HOSPITALS.find((h) => h.id === canonicalId) ?? e.hospital)
       : e.hospital;
 
     if (!hospMap.has(key)) {
@@ -168,67 +209,48 @@ export async function GET(req: NextRequest) {
         insPayerName: null,
       });
     }
+
     const h = hospMap.get(key)!;
-
     if (e.priceType === "gross") h.grossPrices.push(price);
-    if (e.payerType === "cash") h.cashPrices.push(price);
+    if (e.payerType === "cash")  h.cashPrices.push(price);
 
+    const isNegotiated = e.priceType === "negotiated" || e.priceType === "discounted";
     if (payerType) {
-      if (e.payerType === payerType && (e.priceType === "negotiated" || e.priceType === "discounted")) {
-        const nameMatch = !payerName || e.payerName.toLowerCase().includes(payerName.split(" ")[0].toLowerCase());
-        if (nameMatch) {
+      if (e.payerType === payerType && isNegotiated) {
+        const nameMatch = !payerName ||
+          e.payerName.toLowerCase().includes(payerName.split(" ")[0].toLowerCase());
+        if (nameMatch || h.insPrices.length === 0) {
           h.insPrices.push(price);
           if (!h.insPayerName) h.insPayerName = e.payerName;
         }
       }
-      // Broader: any negotiated rate for that payer type if no name match found
-      if (h.insPrices.length === 0 && e.payerType === payerType && (e.priceType === "negotiated" || e.priceType === "discounted")) {
-        h.insPrices.push(price);
-        if (!h.insPayerName) h.insPayerName = e.payerName;
-      }
-    } else {
-      // No insurer selected — use commercial negotiated rates
-      if (e.payerType === "commercial" && (e.priceType === "negotiated" || e.priceType === "discounted")) {
-        h.insPrices.push(price);
-        if (!h.insPayerName) h.insPayerName = e.payerName;
-      }
+    } else if (e.payerType === "commercial" && isNegotiated) {
+      h.insPrices.push(price);
+      if (!h.insPayerName) h.insPayerName = e.payerName;
     }
   }
 
-  // 4. Convert to comparison entries from real DB data
-  //    Use median to avoid outliers, with a reasonable floor
+  // 4. Convert DB groups to comparison entries
+  //    Use median to reduce outlier impact. No artificial tier multipliers.
   const realEntries: Omit<HospitalComparisonEntry, "rank">[] = [];
   const coveredIds = new Set<string>();
 
   for (const h of hospMap.values()) {
-    // Need at least insurance OR cash data (both meaningful)
-    const insuranceRate = h.insPrices.length >= 2
-      ? Math.round(median(h.insPrices))
-      : h.insPrices.length === 1
-      ? Math.round(h.insPrices[0])
-      : null;
+    const insuranceRate    = h.insPrices.length  ? Math.round(median(h.insPrices))          : null;
+    const cashPrice        = h.cashPrices.length  ? Math.round(median(h.cashPrices))         : null;
+    const chargemasterPrice = h.grossPrices.length ? Math.round(Math.max(...h.grossPrices))  : null;
 
-    const cashPrice = h.cashPrices.length >= 2
-      ? Math.round(median(h.cashPrices))
-      : h.cashPrices.length === 1
-      ? Math.round(h.cashPrices[0])
-      : null;
-
-    const chargemasterPrice = h.grossPrices.length >= 2
-      ? Math.round(Math.max(...h.grossPrices))
-      : h.grossPrices.length === 1
-      ? Math.round(h.grossPrices[0])
-      : null;
-
-    // Skip if both are null — no usable data
     if (insuranceRate == null && cashPrice == null) continue;
 
-    // Fill in missing prices with calibrated estimates
+    // Derive missing price type from the other (standard ratio, no tier adjustment)
     const effectiveInsuranceRate = insuranceRate ?? (cashPrice != null ? Math.round(cashPrice * 0.82) : null);
-    const effectiveCashPrice = cashPrice ?? (insuranceRate != null ? Math.round(insuranceRate * 1.22) : null);
+    const effectiveCashPrice     = cashPrice     ?? (insuranceRate != null ? Math.round(insuranceRate * 1.22) : null);
 
-    const patientCost = effectiveInsuranceRate !== null ? Math.round(effectiveInsuranceRate * coinsurance) : null;
-    const insurerPays = effectiveInsuranceRate !== null ? Math.round(effectiveInsuranceRate * (1 - coinsurance)) : null;
+    const patientCost = effectiveInsuranceRate != null ? Math.round(effectiveInsuranceRate * coinsurance) : null;
+    const insurerPays = effectiveInsuranceRate != null ? Math.round(effectiveInsuranceRate * (1 - coinsurance)) : null;
+
+    const dataQuality: HospitalComparisonEntry["dataQuality"] =
+      insuranceRate != null && cashPrice != null ? "real" : "partial";
 
     realEntries.push({
       hospital: h.hospital,
@@ -238,56 +260,51 @@ export async function GET(req: NextRequest) {
       insurerPays,
       cashPrice: effectiveCashPrice,
       payerName: h.insPayerName,
+      dataQuality,
       isAiEstimate: false,
     });
     coveredIds.add(h.hospital.id);
   }
 
-  // 5. AI fallback — estimate for all hospitals not covered by real DB data
-  //    (Always runs — does NOT require procedure to exist in DB)
+  // 5. AI fallback — only for hospitals with no DB data at all, clearly labeled "estimated"
   const missingHospitals = MANHATTAN_HOSPITALS.filter((h) => !coveredIds.has(h.id));
-
   let aiEntries: Omit<HospitalComparisonEntry, "rank">[] = [];
 
   if (missingHospitals.length > 0) {
-    const procName = procedure?.name ?? `procedure for CPT ${cptCode}`;
+    const procName         = procedure?.name ?? `procedure for CPT ${cptCode}`;
     const effectivePayerType = payerType ?? "commercial";
-    const payerDesc = payerName
+    const payerDesc        = payerName
       ? `${payerName} (${effectivePayerType})`
       : `typical ${effectivePayerType} insurance`;
 
+    // Anchor on episode totals from the breakdown if available.
+    // We only use these to prevent the AI from producing single-line-item prices.
+    const episodeAnchor = episodeInsMedian
+      ? `Use $${episodeInsMedian.toLocaleString()} (negotiated) and $${episodeCashMedian?.toLocaleString() ?? "N/A"} (cash) as approximate episode total reference.`
+      : `For inpatient surgical procedures, negotiated rates are typically $25,000–$100,000+. For outpatient, $2,000–$20,000.`;
+
     try {
       const aiText = await anthropicCall({
-        max_tokens: 1500,
-        system: `You are an expert in Manhattan hospital pricing and healthcare cost transparency. You have deep knowledge of NYC hospital chargemasters, CMS data, and negotiated insurance rates for 2024-2025. Return ONLY valid JSON — no markdown, no commentary.`,
-        messages: [{
-          role: "user",
-          content: `Provide realistic, shoppable ALL-IN episode-of-care pricing for CPT ${cptCode} (${procName}) at these Manhattan hospitals:
-
+        max_tokens: 1200,
+        system: `You are an expert in Manhattan hospital pricing. Return ONLY valid JSON — no markdown, no commentary.`,
+        messages: [
+          {
+            role: "user",
+            content: `Estimate ALL-IN episode-of-care prices for CPT ${cptCode} (${procName}) at these Manhattan hospitals:
 ${missingHospitals.map((h, i) => `${i}: ${h.name}`).join("\n")}
 
-Insurance context: The patient has ${payerDesc}.
+Insurance context: ${payerDesc}
+${episodeAnchor}
 
-IMPORTANT GUIDELINES:
-- Prices must reflect the COMPLETE episode of care (facility + professional fees bundled), not just a fee-schedule line item
-- chargemasterPrice = hospital's gross/list price before any discounts (typically 3-6× negotiated)
-- insuranceRate = the in-network negotiated rate this hospital accepts from ${payerDesc}
-- cashPrice = self-pay / uninsured price (typically 15-30% above negotiated, but well below chargemaster)
-- Use realistic 2024-2025 Manhattan market data — do not underestimate
-- HSS and NYP/Cornell typically charge 10-20% more than average; Bellevue charges 20-30% less
-- Major academic centers (Columbia, Weill Cornell, Mount Sinai) are premium-priced
-- Specialty centers (HSS for ortho, MSK for oncology) command premium rates
+Prices must reflect the complete episode (facility + professional + anesthesia + implants), not a single fee-schedule line item.
+chargemasterPrice = gross list price (3-6× negotiated rate)
+insuranceRate     = in-network negotiated episode total
+cashPrice         = self-pay episode total (15-30% above negotiated)
 
-Return a JSON array:
-[
-  {
-    "hospitalIndex": <0-based index from list above>,
-    "chargemasterPrice": <integer USD>,
-    "insuranceRate": <integer USD in-network negotiated, or null if truly cash-only context>,
-    "cashPrice": <integer USD self-pay>
-  }
-]`,
-        }],
+Return JSON array:
+[{ "hospitalIndex": <0-based>, "chargemasterPrice": <int USD>, "insuranceRate": <int USD>, "cashPrice": <int USD> }]`,
+          },
+        ],
       });
 
       const match = aiText.match(/\[[\s\S]*\]/);
@@ -303,18 +320,19 @@ Return a JSON array:
           const hosp = missingHospitals[item.hospitalIndex];
           if (!hosp) return [];
           const insuranceRate = item.insuranceRate ?? null;
-          const patientCost = insuranceRate !== null ? Math.round(insuranceRate * coinsurance) : null;
-          const insurerPays = insuranceRate !== null ? Math.round(insuranceRate * (1 - coinsurance)) : null;
-          return [{
-            hospital: { id: hosp.id, name: hosp.name, address: hosp.address },
-            chargemasterPrice: item.chargemasterPrice,
-            insuranceRate,
-            patientCost,
-            insurerPays,
-            cashPrice: item.cashPrice,
-            payerName: payerName ?? (payerType ? `${payerType} insurance` : null),
-            isAiEstimate: true,
-          }];
+          return [
+            {
+              hospital: { id: hosp.id, name: hosp.name, address: hosp.address },
+              chargemasterPrice: item.chargemasterPrice,
+              insuranceRate,
+              patientCost: insuranceRate != null ? Math.round(insuranceRate * coinsurance) : null,
+              insurerPays: insuranceRate != null ? Math.round(insuranceRate * (1 - coinsurance)) : null,
+              cashPrice: item.cashPrice,
+              payerName: payerName ?? (payerType ? `${payerType} insurance` : null),
+              dataQuality: "estimated",
+              isAiEstimate: true,
+            },
+          ];
         });
       }
     } catch (err) {
@@ -322,15 +340,20 @@ Return a JSON array:
     }
   }
 
-  // 6. Merge real + AI, rank by patient cost (or cash if no insurance)
+  // 6. Merge, sort by patient cost (real/partial first at same price tier), then rank
   const allEntries = [...realEntries, ...aiEntries];
 
-  const sortValue = (e: Omit<HospitalComparisonEntry, "rank">) =>
-    e.patientCost ?? e.cashPrice ?? Infinity;
-
-  allEntries.sort((a, b) => sortValue(a) - sortValue(b));
+  allEntries.sort((a, b) => {
+    const av = sortValue(a);
+    const bv = sortValue(b);
+    if (av !== bv) return av - bv;
+    // Tiebreak: real > partial > estimated
+    const qualityRank = { real: 0, partial: 1, estimated: 2 } as const;
+    return qualityRank[a.dataQuality] - qualityRank[b.dataQuality];
+  });
 
   const ranked: HospitalComparisonEntry[] = allEntries.map((e, i) => ({ ...e, rank: i + 1 }));
 
+  await redis.set(cacheKey, ranked, { ex: 86400 });
   return NextResponse.json(ranked);
 }

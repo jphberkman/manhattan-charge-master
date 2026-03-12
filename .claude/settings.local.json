@@ -34,7 +34,8 @@
       "Bash(npm i:*)",
       "Bash(npx prisma:*)",
       "Bash(grep:*)",
-      "Bash(awk NR==3{print; exit}:*)"
+      "Bash(awk NR==3{print; exit}:*)",
+      "Bash(npx vercel:*)"
     ]
   }
 }

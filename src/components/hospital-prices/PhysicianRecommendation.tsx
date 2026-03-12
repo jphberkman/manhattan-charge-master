@@ -2,34 +2,36 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Loader2, Star, Building2, TrendingDown, Sparkles,
-  ChevronDown, ChevronUp, BadgeCheck, Trophy, ShieldCheck, ShieldAlert,
+  Loader2, Star, Building2, Sparkles,
+  BadgeCheck, Trophy, ShieldCheck, DatabaseZap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { PhysicianRecommendation, PhysicianHospital } from "@/app/api/physicians/recommend/route";
+import type { PhysicianRecommendation, PhysicianResponse } from "@/app/api/physicians/recommend/route";
 import type { HospitalComparisonEntry } from "@/app/api/hospitals/compare/route";
 import type { InsuranceSelection } from "./InsuranceSelector";
 
-const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 interface Props {
   procedureName: string;
   cptCode: string | null;
   insurance: InsuranceSelection | null;
-  coinsurance: number;
   hospitalPrices: HospitalComparisonEntry[];
 }
 
-export function PhysicianRecommendations({ procedureName, cptCode, insurance, coinsurance, hospitalPrices }: Props) {
+// ── Main component ─────────────────────────────────────────────────────────────
+
+export function PhysicianRecommendations({ procedureName, cptCode, insurance, hospitalPrices }: Props) {
   const [physicians, setPhysicians] = useState<PhysicianRecommendation[]>([]);
+  const [sourceNote, setSourceNote] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   const load = useCallback(async (prices: HospitalComparisonEntry[]) => {
     setLoading(true);
     setError(null);
     setPhysicians([]);
+    setSourceNote(null);
     try {
       const res = await fetch("/api/physicians/recommend", {
         method: "POST",
@@ -38,44 +40,42 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, co
           procedureName,
           cptCode,
           insurerName: insurance?.insurer ?? null,
-          payerType: insurance?.payerType ?? null,
-          coinsurance,
+          payerType:   insurance?.payerType ?? null,
           hospitalPrices: prices,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed");
+      const data: PhysicianResponse = await res.json();
+      if (!res.ok) throw new Error((data as any).error ?? "Failed");
       setPhysicians(data.physicians ?? []);
+      setSourceNote(data.sourceNote ?? null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load physician recommendations");
     } finally {
       setLoading(false);
     }
-  }, [procedureName, cptCode, insurance, coinsurance]);
+  }, [procedureName, cptCode, insurance]);
 
-  // Wait until hospital prices are loaded, then fetch physicians
   useEffect(() => {
-    if (hospitalPrices.length > 0) {
-      load(hospitalPrices);
-    }
-  }, [hospitalPrices, load]);
+    load(hospitalPrices);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [procedureName, cptCode, insurance]);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
 
       {/* ── Header ── */}
       <div className="border-b border-neutral-100 bg-gradient-to-r from-violet-700 to-indigo-700 px-6 py-4">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-violet-300">Find a doctor</p>
             <h3 className="mt-0.5 text-lg font-bold text-white">Top surgeons for {procedureName}</h3>
             <p className="mt-0.5 text-sm text-violet-200">
-              Recommended specialists · where they work · what it would cost you there
+              Recommended specialists · hospital affiliations · in-network status
             </p>
           </div>
           <div className="flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5">
             <Sparkles className="size-3.5 text-violet-200" />
-            <span className="text-xs font-semibold text-white">AI-curated · verify with your insurer</span>
+            <span className="text-xs font-semibold text-white">AI-ranked · verify with your insurer</span>
           </div>
         </div>
       </div>
@@ -84,7 +84,11 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, co
       {loading && (
         <div className="space-y-3 px-6 py-5">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="flex items-start gap-4 rounded-2xl border border-neutral-100 p-4" style={{ opacity: 1 - i * 0.25 }}>
+            <div
+              key={i}
+              className="flex items-start gap-4 rounded-2xl border border-neutral-100 p-4"
+              style={{ opacity: 1 - i * 0.25 }}
+            >
               <div className="size-12 shrink-0 animate-pulse rounded-full bg-neutral-100" />
               <div className="flex-1 space-y-2">
                 <div className="h-4 w-40 animate-pulse rounded bg-neutral-100" />
@@ -94,7 +98,6 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, co
                   <div className="h-8 w-36 animate-pulse rounded-xl bg-neutral-100" />
                 </div>
               </div>
-              <div className="h-10 w-24 animate-pulse rounded-xl bg-neutral-100 shrink-0" />
             </div>
           ))}
           <div className="flex items-center gap-2 pb-2">
@@ -114,20 +117,18 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, co
         <>
           <div className="divide-y divide-neutral-100">
             {physicians.map((doc, idx) => {
-              const isExpanded = expandedIdx === idx;
               const isBest = idx === 0;
-              const cheapest = doc.cheapestHospital;
 
               return (
                 <div key={doc.name} className={cn(isBest && "bg-violet-50/40")}>
                   <div className="px-6 py-4">
-                    <div className="flex items-start gap-4 flex-wrap sm:flex-nowrap">
+                    <div className="flex items-start gap-4">
 
                       {/* Avatar + rank */}
                       <div className="relative shrink-0">
                         <div className={cn(
                           "flex size-12 items-center justify-center rounded-full text-lg font-bold text-white",
-                          isBest ? "bg-violet-600" : "bg-neutral-300"
+                          isBest ? "bg-violet-600" : "bg-neutral-300",
                         )}>
                           {doc.name.split(" ").at(-1)?.[0] ?? "?"}
                         </div>
@@ -148,105 +149,74 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, co
                               <Star className="size-3" /> Top pick
                             </span>
                           )}
-                          {doc.npiVerified ? (
+                          {doc.npiSource && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
+                              <DatabaseZap className="size-3" /> NPI Registry
+                            </span>
+                          )}
+                          {!doc.npiSource && doc.npiVerified && (
                             <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
                               <ShieldCheck className="size-3" /> NPI Verified
                             </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                              <ShieldAlert className="size-3" /> Unverified
-                            </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-2 flex-wrap">
+
+                        <div className="flex flex-wrap items-center gap-2">
                           <p className="mt-0.5 text-sm text-neutral-600">{doc.npiSpecialty || doc.specialty}</p>
                           {doc.npi && (
                             <p className="mt-0.5 text-xs text-neutral-400">NPI {doc.npi}</p>
                           )}
                         </div>
+
                         <p className="mt-1 text-xs text-neutral-500 leading-snug">{doc.whyRecommended}</p>
 
                         {/* Highlights */}
                         <div className="mt-2 flex flex-wrap gap-1.5">
                           {doc.highlights.map((h) => (
-                            <span key={h} className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-xs text-neutral-600">
+                            <span
+                              key={h}
+                              className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-2.5 py-0.5 text-xs text-neutral-600"
+                            >
                               <BadgeCheck className="size-3 text-green-500" /> {h}
                             </span>
                           ))}
                         </div>
-                      </div>
 
-                      {/* Best price callout */}
-                      {cheapest && (
-                        <div className={cn(
-                          "shrink-0 rounded-xl border p-3 text-center min-w-[120px]",
-                          isBest ? "border-violet-200 bg-violet-50" : "border-neutral-200 bg-neutral-50"
-                        )}>
-                          <p className="text-xs text-neutral-500 mb-0.5">Best price with</p>
-                          <p className="text-xs font-semibold text-neutral-600 truncate max-w-[110px]">
-                            {cheapest.hospitalName.replace("NYP / Columbia University Irving Medical Center", "NYP / Columbia").replace("NewYork-Presbyterian / Weill Cornell", "NYP / Weill Cornell").replace("NYU Langone Health (Tisch Hospital)", "NYU Langone")}
-                          </p>
-                          {cheapest.yourCost != null ? (
-                            <>
-                              <p className={cn("mt-1 text-lg font-extrabold", isBest ? "text-violet-700" : "text-neutral-800")}>
-                                {fmt.format(cheapest.yourCost)}
-                              </p>
-                              <p className="text-xs text-neutral-400">your cost</p>
-                            </>
-                          ) : cheapest.cashPrice != null ? (
-                            <>
-                              <p className={cn("mt-1 text-lg font-extrabold", isBest ? "text-violet-700" : "text-neutral-800")}>
-                                {fmt.format(cheapest.cashPrice)}
-                              </p>
-                              <p className="text-xs text-neutral-400">cash price</p>
-                            </>
-                          ) : null}
+                        {/* Hospital affiliations */}
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {doc.hospitals.map((h) => (
+                            <span
+                              key={h.hospitalId || h.hospitalName}
+                              className="inline-flex items-center gap-1 rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-xs font-medium text-neutral-700"
+                            >
+                              <Building2 className="size-3 text-neutral-400" /> {h.hospitalName}
+                            </span>
+                          ))}
                         </div>
-                      )}
-                    </div>
-
-                    {/* Hospital list toggle */}
-                    <button
-                      onClick={() => setExpandedIdx(isExpanded ? null : idx)}
-                      className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-800 transition-colors"
-                    >
-                      <Building2 className="size-3.5" />
-                      {isExpanded ? "Hide" : "See"} all {doc.hospitals.length} hospitals this doctor uses
-                      {isExpanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-                    </button>
-                  </div>
-
-                  {/* Expanded hospital price list */}
-                  {isExpanded && (
-                    <div className="border-t border-neutral-100 bg-neutral-50 px-6 pb-4 pt-3">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400 mb-3">
-                        Price at each hospital this doctor uses
-                      </p>
-                      <div className="space-y-2">
-                        {[...doc.hospitals]
-                          .sort((a, b) => (a.yourCost ?? a.cashPrice ?? Infinity) - (b.yourCost ?? b.cashPrice ?? Infinity))
-                          .map((h) => (
-                            <HospitalRow key={h.hospitalId} h={h} showIns={!!insurance && insurance.payerType !== "cash"} />
-                          ))
-                        }
                       </div>
                     </div>
-                  )}
+                  </div>
                 </div>
               );
             })}
           </div>
 
-          {/* Footer disclaimer */}
-          <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 space-y-1.5">
+          {/* Footer */}
+          <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 space-y-1">
+            {sourceNote && (
+              <p className="text-xs text-neutral-500">
+                <DatabaseZap className="inline size-3 mr-1 text-blue-500" />
+                {sourceNote}
+              </p>
+            )}
             <p className="text-xs text-neutral-400">
               <ShieldCheck className="inline size-3 mr-1 text-green-500" />
-              <span className="font-semibold text-neutral-500">NPI Verified</span> doctors are confirmed in the CMS National Provider Identifier registry as licensed NY physicians.
-              Unverified doctors are AI-suggested but could not be confirmed — verify before booking.
+              <span className="font-semibold text-neutral-500">NPI Registry</span> = sourced directly from the CMS National Provider Identifier database.{" "}
+              <span className="font-semibold text-neutral-500">NPI Verified</span> = AI-recommended name matched in the registry.
             </p>
             <p className="text-xs text-neutral-400">
               <Sparkles className="inline size-3 mr-1 text-violet-400" />
-              Always confirm your doctor is in-network with your insurance. Prices are estimates — your actual cost depends on your specific plan and remaining deductible.
+              Always confirm your doctor is in-network with your insurance before booking.
             </p>
           </div>
         </>
@@ -257,44 +227,6 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, co
           No physician recommendations available for this procedure.
         </p>
       )}
-    </div>
-  );
-}
-
-// ── Hospital price row ─────────────────────────────────────────────────────────
-function HospitalRow({ h, showIns }: { h: PhysicianHospital; showIns: boolean }) {
-  return (
-    <div className={cn(
-      "flex items-center justify-between gap-3 rounded-xl border px-4 py-2.5",
-      h.isLowestCost
-        ? "border-green-200 bg-green-50"
-        : "border-neutral-200 bg-white"
-    )}>
-      <div className="flex items-center gap-2 min-w-0">
-        {h.isLowestCost && <TrendingDown className="size-4 shrink-0 text-green-600" />}
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-neutral-800 truncate">{h.hospitalName}</p>
-          {h.isLowestCost && (
-            <p className="text-xs font-semibold text-green-600">Lowest price for this doctor</p>
-          )}
-        </div>
-      </div>
-      <div className="flex items-center gap-4 shrink-0 text-right">
-        {showIns && h.yourCost != null && (
-          <div>
-            <p className={cn("font-bold text-sm", h.isLowestCost ? "text-green-700" : "text-violet-700")}>
-              {fmt.format(h.yourCost)}
-            </p>
-            <p className="text-xs text-neutral-400">your cost</p>
-          </div>
-        )}
-        {h.cashPrice != null && (
-          <div>
-            <p className="font-semibold text-sm text-neutral-600">{fmt.format(h.cashPrice)}</p>
-            <p className="text-xs text-neutral-400">no insurance</p>
-          </div>
-        )}
-      </div>
     </div>
   );
 }

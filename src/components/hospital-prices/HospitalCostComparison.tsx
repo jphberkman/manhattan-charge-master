@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Loader2, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Sparkles, Building2, Trophy, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { GlossaryTip } from "./GlossaryTip";
 import type { HospitalComparisonEntry } from "@/app/api/hospitals/compare/route";
 import type { InsuranceSelection } from "./InsuranceSelector";
 
@@ -11,15 +12,24 @@ const fmtNull = (v: number | null) => (v == null ? "—" : fmt.format(v));
 
 type SortKey = "rank" | "patientCost" | "cash" | "insurance" | "savings";
 
+interface EpisodeTotals {
+  insLow: number | null;
+  insHigh: number | null;
+  cashLow: number;
+  cashHigh: number;
+}
+
 interface Props {
   cptCode: string;
   procedureName: string;
   insurance: InsuranceSelection | null;
   coinsurance: number;
+  episodeTotals?: EpisodeTotals;
+  allCptCodes?: string[];
   onPricesLoaded?: (entries: HospitalComparisonEntry[]) => void;
 }
 
-export function HospitalCostComparison({ cptCode, procedureName, insurance, coinsurance, onPricesLoaded }: Props) {
+export function HospitalCostComparison({ cptCode, procedureName, insurance, coinsurance, episodeTotals, allCptCodes, onPricesLoaded }: Props) {
   const [entries, setEntries] = useState<HospitalComparisonEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,6 +43,11 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
       const params = new URLSearchParams({ cptCode, coinsurance: String(coinsurance) });
       if (insurance?.payerType) params.set("payerType", insurance.payerType);
       if (insurance?.insurer) params.set("payerName", insurance.insurer);
+      if (allCptCodes?.length) params.set("allCptCodes", allCptCodes.join(","));
+      if (episodeTotals?.insLow)  params.set("episodeInsLow",  String(episodeTotals.insLow));
+      if (episodeTotals?.insHigh) params.set("episodeInsHigh", String(episodeTotals.insHigh));
+      if (episodeTotals?.cashLow)  params.set("episodeCashLow",  String(episodeTotals.cashLow));
+      if (episodeTotals?.cashHigh) params.set("episodeCashHigh", String(episodeTotals.cashHigh));
       const res = await fetch(`/api/hospitals/compare?${params}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed");
@@ -43,7 +58,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
     } finally {
       setLoading(false);
     }
-  }, [cptCode, coinsurance, insurance, onPricesLoaded]);
+  }, [cptCode, coinsurance, insurance, episodeTotals, allCptCodes, onPricesLoaded]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -185,12 +200,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                       <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-white border border-neutral-200 text-xs font-bold text-neutral-500">
                         {i + 1}
                       </div>
-                      {entry.isAiEstimate && (
-                        <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                          <Sparkles className="size-2.5" /> Est.
-                        </span>
-                      )}
-                    </div>
+                      </div>
                     <p className="mt-2 text-xs font-semibold text-neutral-600 leading-tight line-clamp-2">
                       {entry.hospital.name}
                     </p>
@@ -255,16 +265,22 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                   </Th>
                   <Th>Hospital</Th>
                   <Th onClick={() => toggleSort("cash")} className="text-right">
-                    No insurance <SortIcon col="cash" s={sortKey} d={sortDir} />
+                    <span className="inline-flex items-center justify-end gap-1">
+                      No insurance <GlossaryTip glossaryKey="cashPrice" side="top" /> <SortIcon col="cash" s={sortKey} d={sortDir} />
+                    </span>
                   </Th>
                   {showIns && (
                     <Th onClick={() => toggleSort("insurance")} className="text-right">
-                      Hospital bill <SortIcon col="insurance" s={sortKey} d={sortDir} />
+                      <span className="inline-flex items-center justify-end gap-1">
+                        Negotiated rate <GlossaryTip glossaryKey="negotiated" side="top" /> <SortIcon col="insurance" s={sortKey} d={sortDir} />
+                      </span>
                     </Th>
                   )}
                   {showIns && (
                     <Th onClick={() => toggleSort("patientCost")} className="text-right text-violet-600">
-                      Your cost <SortIcon col="patientCost" s={sortKey} d={sortDir} />
+                      <span className="inline-flex items-center justify-end gap-1">
+                        Your cost <GlossaryTip glossaryKey="yourCost" side="top" /> <SortIcon col="patientCost" s={sortKey} d={sortDir} />
+                      </span>
                     </Th>
                   )}
                   {showIns && (
@@ -312,7 +328,8 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                               {isBestIns && showIns && <Badge color="green">Cheapest with insurance</Badge>}
                               {isBestCash && !showIns && <Badge color="green">Cheapest cash</Badge>}
                               {isBestCash && showIns && !isBestIns && <Badge color="blue">Cheapest cash</Badge>}
-                              {entry.isAiEstimate && <Badge color="amber"><Sparkles className="size-2.5 mr-0.5" />Estimated</Badge>}
+                              {entry.dataQuality === "estimated" && <Badge color="amber">Estimated</Badge>}
+                              {entry.dataQuality === "partial" && <Badge color="amber">Partial data</Badge>}
                             </div>
                             <p className="mt-0.5 max-w-[200px] truncate text-xs text-neutral-400">{entry.hospital.address}</p>
                           </div>
@@ -398,8 +415,6 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
 
           {/* Footer */}
           <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 text-xs text-neutral-400">
-            {entries.filter((e) => !e.isAiEstimate).length} hospitals with real published prices ·{" "}
-            {entries.filter((e) => e.isAiEstimate).length} AI-estimated ·
             &quot;Your cost&quot; = what you owe after your insurance pays its share ·
             &quot;Insurance saves&quot; = how much less you pay vs paying the full cash price yourself
           </div>

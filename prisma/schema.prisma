@@ -44,6 +44,8 @@ model Hospital {
   updatedAt  DateTime  @updatedAt
 
   prices     PriceEntry[]
+
+  @@index([name])
 }
 
 model Procedure {
@@ -77,5 +79,6 @@ model PriceEntry {
   @@index([procedureId, payerType])
   @@index([procedureId, payerType, priceType])
   @@index([hospitalId])
+  @@index([hospitalId, procedureId])
   @@index([payerType, priceType])
 }

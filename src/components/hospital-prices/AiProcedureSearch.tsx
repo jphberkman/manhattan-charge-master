@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Search, Loader2, ChevronDown, ChevronUp, CircleDot,
-  Stethoscope, Wrench, AlertCircle, ListCollapse,
+  Stethoscope, Wrench, AlertCircle, ListCollapse, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProcedureBreakdown, BreakdownComponent } from "@/app/api/procedure-breakdown/route";
@@ -11,6 +11,7 @@ import type { HospitalComparisonEntry } from "@/app/api/hospitals/compare/route"
 import type { InsuranceSelection } from "./InsuranceSelector";
 import { HospitalCostComparison } from "./HospitalCostComparison";
 import { PhysicianRecommendations } from "./PhysicianRecommendation";
+import { GlossaryTip } from "./GlossaryTip";
 
 export type { ProcedureBreakdown };
 
@@ -74,6 +75,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
   const [loadingPhase, setLoadingPhase] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [streamingText, setStreamingText] = useState("");
   const [breakdown, setBreakdown] = useState<ProcedureBreakdown | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [coinsurance, setCoinsurance] = useState(0.20);
@@ -122,6 +124,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
     setLoading(true);
     setError(null);
     setBreakdown(null);
+    setStreamingText("");
     setShowBreakdown(false);
     setExpandedIds(new Set());
     setHospitalPrices([]);
@@ -137,10 +140,44 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
           coinsurance,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Request failed");
-      setBreakdown(data);
-      onBreakdownReady?.(data);
+
+      if (!res.body) throw new Error("No response body");
+
+      // Read SSE stream
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let currentEvent = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newlineIdx;
+        while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, newlineIdx);
+          buffer = buffer.slice(newlineIdx + 1);
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            const jsonStr = line.slice(6).trim();
+            try {
+              const parsed = JSON.parse(jsonStr);
+              if (currentEvent === "chunk") {
+                setStreamingText((prev) => prev + (parsed.text as string));
+              } else if (currentEvent === "result") {
+                setStreamingText("");
+                setBreakdown(parsed as ProcedureBreakdown);
+                onBreakdownReady?.(parsed as ProcedureBreakdown);
+              } else if (currentEvent === "error") {
+                throw new Error((parsed as { message: string }).message ?? "Request failed");
+              }
+            } catch (e) {
+              if (currentEvent === "error") throw e;
+            }
+          }
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to generate breakdown");
     } finally {
@@ -237,7 +274,9 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <Loader2 className="size-4 animate-spin text-violet-400 shrink-0" />
-                <p className="text-sm font-semibold text-white">{LOADING_PHASES[loadingPhase]}</p>
+                <p className="text-sm font-semibold text-white">
+                  {streamingText ? "Analyzing procedure costs…" : LOADING_PHASES[loadingPhase]}
+                </p>
               </div>
               <span className="text-xs text-white/40 tabular-nums">{elapsed}s</span>
             </div>
@@ -248,7 +287,16 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <p className="mt-2 text-xs text-white/40">AI is analyzing procedure costs across Manhattan hospitals…</p>
+            {streamingText ? (
+              <div className="mt-3 max-h-28 overflow-hidden rounded-lg bg-white/5 px-3 py-2">
+                <p className="font-mono text-xs text-white/60 leading-relaxed line-clamp-5 break-all">
+                  {streamingText}
+                  <span className="inline-block w-1.5 h-3 bg-violet-400 animate-pulse ml-0.5 align-middle" />
+                </p>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-white/40">AI is analyzing procedure costs across Manhattan hospitals…</p>
+            )}
           </div>
           <div className="px-6 py-5 space-y-3">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -352,6 +400,13 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
               procedureName={breakdown.procedureName}
               insurance={insurance ?? null}
               coinsurance={coinsurance}
+              episodeTotals={{
+                insLow: breakdown.insuranceTotalLow,
+                insHigh: breakdown.insuranceTotalHigh,
+                cashLow: breakdown.cashTotalLow,
+                cashHigh: breakdown.cashTotalHigh,
+              }}
+              allCptCodes={[...new Set(breakdown.components.map((c) => c.cptCode).filter(Boolean))]}
               onPricesLoaded={setHospitalPrices}
             />
           )}
@@ -361,7 +416,6 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
             procedureName={breakdown.procedureName}
             cptCode={breakdown.cptCode ?? null}
             insurance={insurance ?? null}
-            coinsurance={coinsurance}
             hospitalPrices={hospitalPrices}
           />
 
@@ -388,16 +442,27 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
 
             {showBreakdown && (
               <div className="border-t border-neutral-100">
+
+                {/* Chargemaster explainer */}
+                <div className="border-b border-amber-100 bg-amber-50 px-6 py-3">
+                  <p className="text-xs text-amber-800 leading-relaxed">
+                    <span className="font-semibold">What is the &ldquo;List price&rdquo;?</span>{" "}
+                    It&apos;s the hospital&apos;s chargemaster rate — the sticker price almost nobody actually pays.
+                    Insurance plans negotiate it down by 60–80%. Cash prices are similarly discounted.
+                    The number that matters most to you is <span className="font-semibold">Your cost</span> — what you owe after your insurance pays its share.
+                  </p>
+                </div>
+
                 {/* Column header */}
                 <div
                   className="grid items-center gap-0 border-b border-neutral-100 bg-neutral-50 px-6 py-2.5"
                   style={{ gridTemplateColumns: showInsurance ? "1fr 130px 130px 120px 120px" : "1fr 140px 140px" }}
                 >
                   <span className="text-xs font-semibold uppercase tracking-wide text-neutral-400">What&apos;s included</span>
-                  <span className="text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">List price</span>
-                  {showInsurance && <span className="text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">Insurance pays</span>}
-                  {showInsurance && <span className="text-right text-xs font-semibold uppercase tracking-wide text-violet-600">Your cost</span>}
-                  <span className="text-right text-xs font-semibold uppercase tracking-wide text-neutral-400">No insurance</span>
+                  <span className="flex items-center justify-end gap-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">List price <GlossaryTip glossaryKey="chargemaster" side="top" /></span>
+                  {showInsurance && <span className="flex items-center justify-end gap-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">Insurance pays <GlossaryTip glossaryKey="negotiated" side="top" /></span>}
+                  {showInsurance && <span className="flex items-center justify-end gap-1 text-xs font-semibold uppercase tracking-wide text-violet-600">Your cost <GlossaryTip glossaryKey="yourCost" side="top" /></span>}
+                  <span className="flex items-center justify-end gap-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">No insurance <GlossaryTip glossaryKey="cashPrice" side="top" /></span>
                 </div>
 
                 {/* Rows */}
@@ -449,7 +514,7 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                                 className={cn(
                                   "grid items-center gap-0 px-6 py-3 transition-colors",
                                   hasDetail && "cursor-pointer hover:bg-neutral-50",
-                                  (comp as any).hasRealData && "bg-green-50/40"
+                                  comp.dataSource === "real" && "bg-green-50/40"
                                 )}
                                 style={{ gridTemplateColumns: showInsurance ? "1fr 130px 130px 120px 120px" : "1fr 140px 140px" }}
                                 onClick={() => hasDetail && toggleExpand(comp.id)}
@@ -457,9 +522,14 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                                 <div className="min-w-0 pr-4">
                                   <div className="flex flex-wrap items-center gap-1.5">
                                     <span className="text-sm font-medium text-neutral-900">{comp.name}</span>
-                                    {(comp as any).hasRealData && (
+                                    {comp.dataSource === "real" && (
                                       <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
                                         <CircleDot className="size-2.5" /> Real data
+                                      </span>
+                                    )}
+                                    {comp.dataSource === "estimated" && (
+                                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                                        <Sparkles className="size-2.5" /> Estimated
                                       </span>
                                     )}
                                     {hasDetail && (
@@ -549,7 +619,12 @@ export function AiProcedureSearch({ insurance, onBreakdownReady }: Props) {
                     <p className="text-xs text-neutral-500 mb-2"><span className="font-semibold text-neutral-700">Assumptions: </span>{breakdown.assumptions}</p>
                   )}
                   <p className="text-xs text-neutral-400 italic">
-                    Prices come from hospitals&apos; official published price lists and AI estimates. Items marked &quot;Real data&quot; use actual hospital records. Your final bill may be different depending on your specific plan, how much of your annual deductible you&apos;ve already paid, and the details of your care.
+                    Items marked <span className="font-semibold text-green-700 not-italic">Real data</span> use prices from hospitals&apos; official published chargemaster files.{" "}
+                    Items marked <span className="font-semibold text-amber-700 not-italic">Estimated</span> are AI-generated market estimates — no hospital record matched that specific code.{" "}
+                    {breakdown.dataCompleteness != null && (
+                      <>({Math.round(breakdown.dataCompleteness * 100)}% of components backed by real chargemaster data.) </>
+                    )}
+                    Your final bill will differ based on your specific plan, deductible status, and care details.
                   </p>
                 </div>
               </div>

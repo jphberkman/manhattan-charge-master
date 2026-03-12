@@ -40,6 +40,81 @@ async function callOnce(apiKey: string, body: object, useCaching: boolean): Prom
   });
 }
 
+/**
+ * Streaming version — calls Anthropic with stream:true and invokes onChunk for each text delta.
+ * Returns the full accumulated text when done. Uses Sonnet by default for accuracy.
+ */
+export async function anthropicStream(
+  request: AnthropicRequest,
+  onChunk: (text: string) => void,
+): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
+
+  const { cacheSystemPrompt, system, ...rest } = request;
+  const model = rest.model ?? "claude-sonnet-4-6";
+
+  const systemField = system
+    ? cacheSystemPrompt
+      ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }]
+      : system
+    : undefined;
+
+  const payload = {
+    ...rest,
+    model,
+    stream: true,
+    ...(systemField !== undefined && { system: systemField }),
+  };
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      ...(cacheSystemPrompt && { "anthropic-beta": "prompt-caching-2024-07-31" }),
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Anthropic API error ${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  if (!res.body) throw new Error("No response body from Anthropic");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = "";
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIdx;
+    while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, newlineIdx);
+      buffer = buffer.slice(newlineIdx + 1);
+      if (!line.startsWith("data: ")) continue;
+      const data = line.slice(6).trim();
+      if (data === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(data);
+        if (parsed.type === "content_block_delta" && parsed.delta?.type === "text_delta") {
+          const chunk = parsed.delta.text as string;
+          fullText += chunk;
+          onChunk(chunk);
+        }
+      } catch { /* ignore malformed SSE lines */ }
+    }
+  }
+
+  return fullText;
+}
+
 export async function anthropicCall(request: AnthropicRequest): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");

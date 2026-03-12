@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { anthropicCall } from "@/lib/anthropic-fetch";
+import { anthropicStream } from "@/lib/anthropic-fetch";
+import { redis } from "@/lib/redis";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
-// In-memory cache: key → { data, timestamp }
-const breakdownCache = new Map<string, { data: ProcedureBreakdown; ts: number }>();
-const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+// ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface BreakdownComponent {
   id: string;
@@ -22,7 +22,8 @@ export interface BreakdownComponent {
   cashLow: number;
   cashHigh: number;
   notes: string;
-  hasRealData?: boolean;
+  /** "real" = prices come from the chargemaster DB. "estimated" = AI estimate (no DB match). */
+  dataSource: "real" | "estimated";
 }
 
 export interface ConditionAnalysis {
@@ -49,11 +50,139 @@ export interface ProcedureBreakdown {
   insurerName: string | null;
   assumptions: string;
   importantNotes: string[];
+  /** Fraction of components backed by real chargemaster data (0–1). */
+  dataCompleteness: number;
 }
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const CATEGORY_LIST = [
+  "Professional Services",
+  "Facility & OR",
+  "Anesthesia",
+  "Diagnostics & Imaging",
+  "Medical Devices & Implants",
+  "Medications & Consumables",
+  "Rehabilitation",
+  "Follow-up Care",
+] as const;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+type PriceRange = { min: number; max: number; count: number };
+
+type CptPriceMap = Record<
+  string,
+  { name: string; gross: PriceRange | null; negotiated: PriceRange | null; cash: PriceRange | null }
+>;
+
+function buildRange(prices: number[]): PriceRange | null {
+  if (!prices.length) return null;
+  return { min: Math.min(...prices), max: Math.max(...prices), count: prices.length };
+}
+
+function formatRangeLine(label: string, range: PriceRange | null): string | null {
+  if (!range) return null;
+  return `${label} $${Math.round(range.min).toLocaleString()}–$${Math.round(range.max).toLocaleString()} (n=${range.count})`;
+}
+
+function sumField(components: BreakdownComponent[], field: keyof BreakdownComponent): number {
+  return components.reduce((s, c) => {
+    const v = c[field];
+    return s + (typeof v === "number" ? v : 0);
+  }, 0);
+}
+
+function repairJson(jsonStr: string): string {
+  const repair = jsonStr.trimEnd().replace(/,\s*$/, "");
+  const opens = (repair.match(/[\[{]/g) ?? []).length;
+  const closes = (repair.match(/[\]}]/g) ?? []).length;
+  if (opens > closes) return repair + "]".repeat(opens - closes - 1) + "}";
+  return repair;
+}
+
+function byCode(
+  rows: { priceInCents: number; procedure: { cptCode: string } }[],
+): Record<string, number[]> {
+  return rows.reduce<Record<string, number[]>>((acc, r) => {
+    (acc[r.procedure.cptCode] ??= []).push(r.priceInCents / 100);
+    return acc;
+  }, {});
+}
+
+// ── DB helpers ────────────────────────────────────────────────────────────────
+
+/** Broad pre-query: fetches real chargemaster price ranges for procedures matching the query. */
+async function fetchChargemasterData(query: string): Promise<CptPriceMap> {
+  const words = query
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length > 3)
+    .slice(0, 6);
+
+  if (!words.length) return {};
+
+  const procedures = await prisma.procedure.findMany({
+    where: { OR: words.map((w) => ({ name: { contains: w, mode: "insensitive" as const } })) },
+    select: { id: true, cptCode: true, name: true },
+    take: 40,
+  });
+
+  if (!procedures.length) return {};
+
+  const idToProc = Object.fromEntries(procedures.map((p) => [p.id, p]));
+
+  const rows = await prisma.priceEntry.findMany({
+    where: { procedureId: { in: procedures.map((p) => p.id) } },
+    select: { procedureId: true, priceInCents: true, priceType: true, payerType: true },
+  });
+
+  const buckets: Record<string, { name: string; gross: number[]; negotiated: number[]; cash: number[] }> = {};
+
+  for (const row of rows) {
+    const proc = idToProc[row.procedureId];
+    if (!proc) continue;
+    buckets[proc.cptCode] ??= { name: proc.name, gross: [], negotiated: [], cash: [] };
+    const price = row.priceInCents / 100;
+    if (row.priceType === "gross") buckets[proc.cptCode].gross.push(price);
+    else if (row.payerType === "cash") buckets[proc.cptCode].cash.push(price);
+    else if (row.priceType === "negotiated" || row.priceType === "discounted")
+      buckets[proc.cptCode].negotiated.push(price);
+  }
+
+  return Object.fromEntries(
+    Object.entries(buckets).map(([cpt, b]) => [
+      cpt,
+      {
+        name: b.name,
+        gross: buildRange(b.gross),
+        negotiated: buildRange(b.negotiated),
+        cash: buildRange(b.cash),
+      },
+    ]),
+  );
+}
+
+/** Formats the chargemaster map as a human-readable constraint table for the AI prompt. */
+function buildChargemasterContext(priceMap: CptPriceMap): string {
+  const lines = Object.entries(priceMap)
+    .map(([cpt, data]) => {
+      const parts = [
+        formatRangeLine("list", data.gross),
+        formatRangeLine("negotiated", data.negotiated),
+        formatRangeLine("cash", data.cash),
+      ].filter(Boolean);
+      return parts.length ? `  CPT ${cpt} (${data.name}): ${parts.join(" | ")}` : null;
+    })
+    .filter(Boolean);
+  return lines.join("\n");
+}
+
+// ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   const body = await req.json();
-  const { query, insurerName, payerType, coinsurance = 0.20 } = body as {
+  const { query, insurerName, payerType, coinsurance = 0.2 } = body as {
     query: string;
     insurerName?: string;
     payerType?: string;
@@ -64,204 +193,223 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Query is required" }, { status: 400 });
   }
 
-  // Return cached result if available
-  const cacheKey = `${query.trim().toLowerCase()}|${insurerName ?? ""}|${payerType ?? ""}|${coinsurance}`;
-  const cached = breakdownCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-    return NextResponse.json(cached.data);
-  }
+  const cacheKey = `breakdown2:${query.trim().toLowerCase()}|${insurerName ?? ""}|${payerType ?? ""}|${coinsurance}`;
 
-  // Fetch only relevant CPT codes (top 20 fuzzy match) instead of all 200
-  const words = query.trim().split(/\s+/).slice(0, 3);
-  const dbProcedures = await prisma.procedure.findMany({
-    where: {
-      OR: words.map((w) => ({ name: { contains: w, mode: "insensitive" as const } })),
-    },
-    select: { cptCode: true, name: true },
-    take: 20,
-  });
-  const dbCptList = dbProcedures.map((p) => `${p.cptCode}: ${p.name}`).join("\n");
+  // ── SSE setup ──────────────────────────────────────────────────────────────
+  const encoder = new TextEncoder();
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
 
-  const insurerContext = insurerName
-    ? `The patient has ${insurerName} insurance (${payerType ?? "commercial"}).`
-    : "No specific insurer selected — use typical commercial in-network estimates.";
+  const send = (event: string, data: unknown) => {
+    void writer.write(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+  };
 
-  const systemPrompt = `You are a healthcare cost transparency expert specializing in Manhattan hospital charge master pricing, surgical planning, and medical coding.
+  void (async () => {
+    try {
+      // 1. Cache hit
+      const cached = await redis.get<ProcedureBreakdown>(cacheKey);
+      if (cached) {
+        send("result", cached);
+        await writer.close();
+        return;
+      }
 
-You help patients understand the COMPLETE cost of medical procedures — including every piece of hardware, implant, surgical supply, and billable service.
+      // 2. Pre-load real chargemaster data BEFORE calling AI
+      //    This gives Claude hard price bounds instead of making up numbers.
+      const chargemasterData = await fetchChargemasterData(query);
+      const chargemasterContext = buildChargemasterContext(chargemasterData);
+      const hasDbData = Object.keys(chargemasterData).length > 0;
 
-CRITICAL RULES:
-1. The user may describe a medical CONDITION (e.g., "non-union ankle fracture", "torn ACL", "gallstones") or a PROCEDURE directly. You must handle both.
-2. If they describe a condition, first identify the most appropriate surgical procedure, then provide a full breakdown.
-3. Always include a "Medical Devices & Implants" category for surgical procedures — list each implant, screw, plate, nail, anchor, graft, etc. individually with HCPCS codes where applicable.
-4. Provide THREE price tiers per component reflecting real Manhattan hospital market data:
-   - chargemaster: hospital gross/list price (typically 3-8x the insurance rate for implants, 2-4x for services)
-   - insurance: in-network negotiated rate
-   - cash: self-pay discount price (usually 10-40% above insurance rate)
-5. For implant/device items specifically, chargemaster prices can be $500–$25,000+ each.
+      const insurerContext = insurerName
+        ? `The patient has ${insurerName} insurance (${payerType ?? "commercial"}).`
+        : "No specific insurer selected — use typical commercial in-network estimates.";
 
-${dbCptList ? `\nDatabase CPT codes available (prefer these when they match):\n${dbCptList}` : ""}
+      // 3. Build AI prompt — real data as hard constraints, not suggestions
+      const systemPrompt = `You are a healthcare cost transparency expert for Manhattan hospitals.
 
-Respond with ONLY valid JSON — no markdown, no commentary.`;
+Your job is to produce a structured JSON cost breakdown for medical procedures.
+${
+  hasDbData
+    ? `REAL CHARGEMASTER DATA — for any component whose CPT code appears below, you MUST use these ranges.
+Do NOT go outside these bounds. Set "dataSource": "real" for those components.
+${chargemasterContext}
 
-  const userPrompt = `Patient query: "${query}"
+For components with no matching CPT code in the table above, set "dataSource": "estimated"
+and use conservative NYC market estimates. Do not exaggerate prices.`
+    : `No chargemaster database matches found for this query.
+Set "dataSource": "estimated" for all components and use conservative NYC market estimates.`
+}
+
+RULES:
+1. Handle both condition descriptions (e.g. "torn ACL") and direct procedure names.
+2. For conditions, identify the most appropriate surgical procedure first.
+3. For surgical procedures, list every individual implant, screw, plate, nail, anchor, and graft separately with HCPCS codes.
+4. Never fabricate prices for CPT codes listed in the real data table above — use those exact ranges.
+5. Respond with ONLY valid JSON — no markdown, no commentary.`;
+
+      const userPrompt = `Patient query: "${query}"
 ${insurerContext}
 
 Return a complete JSON breakdown:
 {
   "procedureName": "Full official procedure name",
   "cptCode": "primary CPT code",
-  "description": "2-3 sentence plain-language description of what this procedure involves",
+  "description": "2-3 sentence plain-language description",
   "conditionAnalysis": {
     "originalQuery": "${query.replace(/"/g, "'")}",
-    "isConditionDescription": <true if user described a condition rather than a procedure name, false otherwise>,
+    "isConditionDescription": <true if user described a condition, false if they named a procedure directly>,
     "identifiedProcedure": "Procedure identified from their description",
-    "reasoning": "1-2 sentences explaining why this procedure is appropriate for their condition",
-    "alternatives": ["Alternative procedure 1 if applicable", "Alternative procedure 2"]
+    "reasoning": "1-2 sentences explaining why this procedure is appropriate",
+    "alternatives": ["Alternative 1 if applicable"]
   },
   "components": [
     {
       "id": "1",
-      "name": "Component name (be specific — e.g., 'Titanium Locking Compression Plate' not just 'Hardware')",
-      "category": "One of: Professional Services | Facility & OR | Anesthesia | Diagnostics & Imaging | Medical Devices & Implants | Medications & Consumables | Rehabilitation | Follow-up Care",
-      "description": "What this charge covers and why it's needed",
+      "name": "Specific component name (e.g. 'Titanium Locking Plate' not 'Hardware')",
+      "category": "One of: ${CATEGORY_LIST.join(" | ")}",
+      "description": "What this charge covers and why it is needed",
       "cptCode": "CPT code if applicable, else empty string",
       "hcpcsCode": "HCPCS L/C code for devices if applicable, else empty string",
-      "chargemasterLow": <integer USD — hospital gross list price lower bound>,
-      "chargemasterHigh": <integer USD — hospital gross list price upper bound>,
-      "insuranceLow": <integer USD — in-network negotiated rate lower bound>,
-      "insuranceHigh": <integer USD — in-network negotiated rate upper bound>,
-      "cashLow": <integer USD — self-pay cash price lower bound>,
-      "cashHigh": <integer USD — self-pay cash price upper bound>,
-      "notes": "Key cost driver or important note, or empty string"
+      "chargemasterLow": <integer USD — hospital list price lower bound>,
+      "chargemasterHigh": <integer USD — hospital list price upper bound>,
+      "insuranceLow": <integer USD — in-network rate lower bound, or null if unknown>,
+      "insuranceHigh": <integer USD — in-network rate upper bound, or null if unknown>,
+      "cashLow": <integer USD — self-pay lower bound>,
+      "cashHigh": <integer USD — self-pay upper bound>,
+      "notes": "Key cost driver, or empty string",
+      "dataSource": "real" or "estimated"
     }
   ],
   "chargemasterTotalLow": <sum of all chargemasterLow>,
   "chargemasterTotalHigh": <sum of all chargemasterHigh>,
-  "insuranceTotalLow": <sum of all insuranceLow>,
-  "insuranceTotalHigh": <sum of all insuranceHigh>,
+  "insuranceTotalLow": <sum of all non-null insuranceLow, or null>,
+  "insuranceTotalHigh": <sum of all non-null insuranceHigh, or null>,
   "cashTotalLow": <sum of all cashLow>,
   "cashTotalHigh": <sum of all cashHigh>,
-  "assumptions": "What insurance type, network status, and clinical scenario these estimates assume",
+  "assumptions": "What insurance type and clinical scenario these estimates assume",
   "importantNotes": ["3-4 important notes about cost variability, deductibles, etc."]
 }
 
-Be thorough. For a surgical case include ALL of: pre-op labs/imaging, anesthesia, OR facility fee, surgeon fee, all implants/hardware individually, medications/blood products, post-op recovery, physical therapy, and follow-up visits. Use realistic current Manhattan market rates.`;
+For surgical cases include ALL of: pre-op labs/imaging, anesthesia, OR facility fee,
+surgeon fee, all implants individually, medications, post-op recovery, physical therapy,
+and follow-up visits.`;
 
-  try {
-    const text = await anthropicCall({
-      max_tokens: 4096,
-      cacheSystemPrompt: true,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
-    });
-
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error("Could not parse AI response");
-
-    let jsonStr = match[0];
-    let breakdown: Omit<ProcedureBreakdown, "coinsurance" | "insurerName">;
-    try {
-      breakdown = JSON.parse(jsonStr);
-    } catch {
-      const opens = (jsonStr.match(/[\[{]/g) ?? []).length;
-      const closes = (jsonStr.match(/[\]}]/g) ?? []).length;
-      let repair = jsonStr.trimEnd().replace(/,\s*$/, "");
-      for (let i = closes; i < opens; i++) repair += (repair.endsWith("]") || repair.endsWith("}")) ? "" : '"..."}';
-      if (opens > closes) repair += "]".repeat(opens - closes - 1) + "}";
-      breakdown = JSON.parse(repair);
-    }
-
-    // Batch-fetch all CPT codes in one query instead of N individual queries
-    const cptCodes = breakdown.components.map((c) => c.cptCode).filter(Boolean);
-    const insPayerType = payerType ?? "commercial";
-
-    const [grossRows, cashRows, insRows, cheapestRows] = await Promise.all([
-      prisma.priceEntry.findMany({
-        where: { procedure: { cptCode: { in: cptCodes } }, priceType: "gross" },
-        select: { priceInCents: true, procedure: { select: { cptCode: true } } },
-        take: 500,
-      }),
-      prisma.priceEntry.findMany({
-        where: { procedure: { cptCode: { in: cptCodes } }, payerType: "cash" },
-        select: { priceInCents: true, procedure: { select: { cptCode: true } } },
-        take: 500,
-      }),
-      prisma.priceEntry.findMany({
-        where: {
-          procedure: { cptCode: { in: cptCodes } },
-          payerType: insPayerType,
-          priceType: { in: ["negotiated", "discounted"] },
+      // 4. Stream AI response
+      const text = await anthropicStream(
+        {
+          max_tokens: 3000,
+          cacheSystemPrompt: true,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userPrompt }],
         },
-        select: { priceInCents: true, procedure: { select: { cptCode: true } } },
-        take: 500,
-      }),
-      prisma.priceEntry.findMany({
-        where: { procedure: { cptCode: { in: cptCodes } } },
-        select: { priceInCents: true, procedure: { select: { cptCode: true } }, hospital: { select: { name: true } } },
-        orderBy: { priceInCents: "asc" },
-        distinct: ["procedureId"],
-      }),
-    ]);
+        (chunk) => send("chunk", { text: chunk }),
+      );
 
-    // Group by CPT code
-    const byCode = (rows: { priceInCents: number; procedure: { cptCode: string } }[]) =>
-      rows.reduce<Record<string, number[]>>((acc, r) => {
-        (acc[r.procedure.cptCode] ??= []).push(r.priceInCents / 100);
-        return acc;
-      }, {});
+      // 5. Parse JSON
+      const match = text.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error("Could not parse AI response");
 
-    const grossByCpt = byCode(grossRows);
-    const cashByCpt = byCode(cashRows);
-    const insByCpt = byCode(insRows);
-    const cheapestByCpt = cheapestRows.reduce<Record<string, string>>((acc, r) => {
-      if (!acc[r.procedure.cptCode]) acc[r.procedure.cptCode] = (r as { hospital: { name: string }; procedure: { cptCode: string } }).hospital.name;
-      return acc;
-    }, {});
+      let rawBreakdown: Omit<ProcedureBreakdown, "coinsurance" | "insurerName" | "dataCompleteness">;
+      try {
+        rawBreakdown = JSON.parse(match[0]);
+      } catch {
+        rawBreakdown = JSON.parse(repairJson(match[0]));
+      }
 
-    const enrichedComponents = breakdown.components.map((comp) => {
-      if (!comp.cptCode) return comp;
-      const gross = grossByCpt[comp.cptCode] ?? [];
-      const cash = cashByCpt[comp.cptCode] ?? [];
-      const ins = insByCpt[comp.cptCode] ?? [];
-      if (gross.length === 0 && cash.length === 0 && ins.length === 0) return comp;
-      const bestHospital = cheapestByCpt[comp.cptCode];
-      return {
-        ...comp,
-        ...(gross.length > 0 && { chargemasterLow: Math.round(Math.min(...gross)), chargemasterHigh: Math.round(Math.max(...gross)) }),
-        ...(ins.length > 0 && { insuranceLow: Math.round(Math.min(...ins)), insuranceHigh: Math.round(Math.max(...ins)) }),
-        ...(cash.length > 0 && { cashLow: Math.round(Math.min(...cash)), cashHigh: Math.round(Math.max(...cash)) }),
-        notes: comp.notes ? `${comp.notes} Best price: ${bestHospital}.` : `Real charge master data available. Best price: ${bestHospital}.`,
-        hasRealData: true,
+      // 6. Server-side enrichment — authoritative DB override
+      //    Even if Claude used the pre-loaded data correctly, we re-query by the exact
+      //    component CPT codes it generated to ensure numbers are accurate and set
+      //    dataSource authoritatively (not trusting AI self-reporting).
+      const cptCodes = rawBreakdown.components.map((c) => c.cptCode).filter(Boolean);
+      const insPayerType = payerType ?? "commercial";
+
+      const [grossRows, cashRows, insRows] = await Promise.all([
+        prisma.priceEntry.findMany({
+          where: { procedure: { cptCode: { in: cptCodes } }, priceType: "gross" },
+          select: { priceInCents: true, procedure: { select: { cptCode: true } } },
+          take: 500,
+        }),
+        prisma.priceEntry.findMany({
+          where: { procedure: { cptCode: { in: cptCodes } }, payerType: "cash" },
+          select: { priceInCents: true, procedure: { select: { cptCode: true } } },
+          take: 500,
+        }),
+        prisma.priceEntry.findMany({
+          where: {
+            procedure: { cptCode: { in: cptCodes } },
+            payerType: insPayerType,
+            priceType: { in: ["negotiated", "discounted"] },
+          },
+          select: { priceInCents: true, procedure: { select: { cptCode: true } } },
+          take: 500,
+        }),
+      ]);
+
+      const grossByCpt = byCode(grossRows);
+      const cashByCpt = byCode(cashRows);
+      const insByCpt = byCode(insRows);
+
+      const enrichedComponents: BreakdownComponent[] = rawBreakdown.components.map((comp) => {
+        if (!comp.cptCode) return { ...comp, dataSource: "estimated" as const };
+
+        const gross = grossByCpt[comp.cptCode] ?? [];
+        const cash = cashByCpt[comp.cptCode] ?? [];
+        const ins = insByCpt[comp.cptCode] ?? [];
+
+        if (!gross.length && !cash.length && !ins.length) {
+          return { ...comp, dataSource: "estimated" as const };
+        }
+
+        return {
+          ...comp,
+          ...(gross.length && {
+            chargemasterLow: Math.round(Math.min(...gross)),
+            chargemasterHigh: Math.round(Math.max(...gross)),
+          }),
+          ...(ins.length && {
+            insuranceLow: Math.round(Math.min(...ins)),
+            insuranceHigh: Math.round(Math.max(...ins)),
+          }),
+          ...(cash.length && {
+            cashLow: Math.round(Math.min(...cash)),
+            cashHigh: Math.round(Math.max(...cash)),
+          }),
+          dataSource: "real" as const,
+        };
+      });
+
+      const realCount = enrichedComponents.filter((c) => c.dataSource === "real").length;
+      const dataCompleteness = enrichedComponents.length > 0 ? realCount / enrichedComponents.length : 0;
+
+      const enrichedBreakdown: ProcedureBreakdown = {
+        ...rawBreakdown,
+        components: enrichedComponents,
+        chargemasterTotalLow: sumField(enrichedComponents, "chargemasterLow"),
+        chargemasterTotalHigh: sumField(enrichedComponents, "chargemasterHigh"),
+        insuranceTotalLow: sumField(enrichedComponents, "insuranceLow") || null,
+        insuranceTotalHigh: sumField(enrichedComponents, "insuranceHigh") || null,
+        cashTotalLow: sumField(enrichedComponents, "cashLow"),
+        cashTotalHigh: sumField(enrichedComponents, "cashHigh"),
+        coinsurance,
+        insurerName: insurerName ?? null,
+        dataCompleteness,
       };
-    });
 
-    const sumField = (field: keyof BreakdownComponent) =>
-      enrichedComponents.reduce((s, c) => {
-        const v = c[field];
-        return s + (typeof v === "number" ? v : 0);
-      }, 0);
+      await redis.set(cacheKey, enrichedBreakdown, { ex: 86400 });
+      send("result", enrichedBreakdown);
+    } catch (err) {
+      console.error("Breakdown error:", err);
+      send("error", { message: err instanceof Error ? err.message : "Failed to generate breakdown" });
+    } finally {
+      await writer.close();
+    }
+  })();
 
-    const enrichedBreakdown: ProcedureBreakdown = {
-      ...breakdown,
-      components: enrichedComponents,
-      chargemasterTotalLow: sumField("chargemasterLow"),
-      chargemasterTotalHigh: sumField("chargemasterHigh"),
-      insuranceTotalLow: sumField("insuranceLow") || null,
-      insuranceTotalHigh: sumField("insuranceHigh") || null,
-      cashTotalLow: sumField("cashLow"),
-      cashTotalHigh: sumField("cashHigh"),
-      coinsurance,
-      insurerName: insurerName ?? null,
-    };
-
-    breakdownCache.set(cacheKey, { data: enrichedBreakdown, ts: Date.now() });
-    return NextResponse.json(enrichedBreakdown);
-  } catch (err) {
-    console.error("Breakdown error:", err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to generate breakdown" },
-      { status: 500 }
-    );
-  }
+  return new Response(readable, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
