@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Search, Loader2, ChevronDown, ChevronUp, CircleDot,
   Stethoscope, Wrench, AlertCircle, ListCollapse, Sparkles,
@@ -109,6 +109,19 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
   const [insurance, setInsurance]       = useState<InsuranceSelection | null>(null);
   const [showInsurancePicker, setShowInsurancePicker] = useState(false);
   const [insurancePickerExpanded, setInsurancePickerExpanded] = useState(false);
+
+  // Memoized props for HospitalCostComparison — prevents refetch on every parent re-render
+  // (inline objects/arrays create new references each render, which defeats useCallback deps)
+  const episodeTotals = useMemo(() => breakdown ? {
+    insLow:   breakdown.insuranceTotalLow,
+    insHigh:  breakdown.insuranceTotalHigh,
+    cashLow:  breakdown.cashTotalLow,
+    cashHigh: breakdown.cashTotalHigh,
+  } : undefined, [breakdown]);
+
+  const allCptCodes = useMemo(() =>
+    breakdown ? [...new Set(breakdown.components.map((c) => c.cptCode).filter(Boolean))] : undefined,
+  [breakdown]);
 
   const inputRef      = useRef<HTMLInputElement>(null);
   const phaseTimers   = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -575,19 +588,21 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
             </div>
           )}
 
-          {/* Hospital comparison — primary content */}
+          {/* Hospital comparison — starts loading immediately on DB match, upgrades with breakdown data */}
           <HospitalCostComparison
-            cptCode={selectedMatch.cptCode}
-            procedureName={selectedMatch.name}
+            cptCode={breakdown?.cptCode ?? selectedMatch.cptCode}
+            procedureName={breakdown?.procedureName ?? selectedMatch.name}
             insurance={insurance}
             coinsurance={coinsurance}
+            episodeTotals={episodeTotals}
+            allCptCodes={allCptCodes}
             onPricesLoaded={setHospitalPrices}
           />
 
           {/* Physician recommendations */}
           <PhysicianRecommendations
-            procedureName={selectedMatch.name}
-            cptCode={selectedMatch.cptCode}
+            procedureName={breakdown?.procedureName ?? selectedMatch.name}
+            cptCode={breakdown?.cptCode ?? selectedMatch.cptCode}
             insurance={insurance}
             hospitalPrices={hospitalPrices}
           />
@@ -723,32 +738,6 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
               </p>
             </div>
           )}
-
-          {/* Hospital comparison */}
-          {breakdown.cptCode && (
-            <HospitalCostComparison
-              cptCode={breakdown.cptCode}
-              procedureName={breakdown.procedureName}
-              insurance={insurance}
-              coinsurance={coinsurance}
-              episodeTotals={{
-                insLow:   breakdown.insuranceTotalLow,
-                insHigh:  breakdown.insuranceTotalHigh,
-                cashLow:  breakdown.cashTotalLow,
-                cashHigh: breakdown.cashTotalHigh,
-              }}
-              allCptCodes={[...new Set(breakdown.components.map((c) => c.cptCode).filter(Boolean))]}
-              onPricesLoaded={setHospitalPrices}
-            />
-          )}
-
-          {/* Physician recommendations */}
-          <PhysicianRecommendations
-            procedureName={breakdown.procedureName}
-            cptCode={breakdown.cptCode ?? null}
-            insurance={insurance}
-            hospitalPrices={hospitalPrices}
-          />
 
           {/* ── Bill Summary Card — always visible, click to expand itemized ── */}
           <div className="overflow-hidden rounded-2xl border-2 border-violet-200 bg-white shadow-md">
