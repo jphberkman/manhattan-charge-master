@@ -6,7 +6,7 @@ import { getBestMedicareBenchmark } from "@/lib/medicare";
 import type { MedicareBenchmark } from "@/lib/medicare";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -168,7 +168,7 @@ export async function GET(req: NextRequest) {
 
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
-  const cacheKey = `compare5:${allCptCodes.sort().join(",")}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}|${episodeInsMedian ?? ""}|${episodeCashMedian ?? ""}`;
+  const cacheKey = `compare6:${allCptCodes.sort().join(",")}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 

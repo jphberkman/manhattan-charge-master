@@ -81,4 +81,6 @@ model PriceEntry {
   @@index([hospitalId])
   @@index([hospitalId, procedureId])
   @@index([payerType, priceType])
+  @@index([procedureId, priceType, priceInCents])
+  @@index([hospitalId, payerType, priceType])
 }

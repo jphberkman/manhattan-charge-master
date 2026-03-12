@@ -228,7 +228,8 @@ export async function POST(req: NextRequest) {
         ? `The patient has ${insurerName} insurance (${payerType ?? "commercial"}).`
         : "No specific insurer selected — use typical commercial in-network estimates.";
 
-      // 3. Build AI prompt — real data as hard constraints, not suggestions
+      // 3. Build AI prompt — static system prompt (enables Anthropic prompt caching),
+      //    all dynamic content (chargemaster data, insurance) goes in user message
       const systemPrompt = `You are a healthcare cost transparency expert for Manhattan hospitals with deep clinical knowledge.
 
 Your job is to produce a structured JSON cost breakdown for medical procedures.
@@ -244,9 +245,16 @@ CLINICAL REASONING PROTOCOL — before building the bill, reason through:
 
 Use this reasoning to ensure the bill includes EVERY component a patient would actually be charged for.
 
-${
-  hasDbData
-    ? `REAL CHARGEMASTER DATA — use these as reference ranges for matching CPT codes.
+RULES:
+1. Handle both condition descriptions (e.g. "torn ACL") and direct procedure names.
+2. For conditions, identify the most appropriate surgical procedure first (most common treatment, not the most aggressive).
+3. For surgical procedures, list every individual implant, screw, plate, nail, anchor, and graft separately with HCPCS codes.
+4. If CHARGEMASTER DATA is provided in the user message, never fabricate prices for those CPT codes — use those exact ranges.
+5. Manhattan hospital prices are significantly higher than national averages — apply a 1.4–1.8x multiplier vs. national benchmarks.
+6. Respond with ONLY valid JSON — no markdown, no commentary.`;
+
+      const chargemasterSection = hasDbData
+        ? `REAL CHARGEMASTER DATA — use these as reference ranges for matching CPT codes.
 ${chargemasterContext}
 
 IMPORTANT INTERPRETATION RULES:
@@ -257,20 +265,13 @@ IMPORTANT INTERPRETATION RULES:
 - Set "dataSource": "real" for components whose CPT matches the table above.
 - For all other components, use realistic full Manhattan market rates and set "dataSource": "estimated".
 - Do NOT let a low professional fee line item constrain your facility fee or implant cost estimates.`
-    : `No chargemaster database matches found for this query.
-Set "dataSource": "estimated" for all components and use realistic Manhattan market rates.`
-}
-
-RULES:
-1. Handle both condition descriptions (e.g. "torn ACL") and direct procedure names.
-2. For conditions, identify the most appropriate surgical procedure first (most common treatment, not the most aggressive).
-3. For surgical procedures, list every individual implant, screw, plate, nail, anchor, and graft separately with HCPCS codes.
-4. Never fabricate prices for CPT codes listed in the real data table above — use those exact ranges.
-5. Manhattan hospital prices are significantly higher than national averages — apply a 1.4–1.8x multiplier vs. national benchmarks.
-6. Respond with ONLY valid JSON — no markdown, no commentary.`;
+        : `No chargemaster database matches found for this query.
+Set "dataSource": "estimated" for all components and use realistic Manhattan market rates.`;
 
       const userPrompt = `Patient query: "${query}"
 ${insurerContext}
+
+${chargemasterSection}
 
 Return a complete JSON breakdown:
 {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { redis } from "@/lib/redis";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
+  const cacheKey = `search2:${query.trim().toLowerCase()}`;
+  const cached = await redis.get<ProcedureSearchResponse>(cacheKey);
+  if (cached) return NextResponse.json(cached);
+
   // 1. Find matching procedures in the DB
   const procedures = await prisma.procedure.findMany({
     where: isCptQuery
@@ -71,12 +76,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  // 2. Get distinct hospital counts per procedure (one query for all)
-  const procedureIds = procedures.map((p) => p.id);
-
+  // 2. Get distinct hospital counts — select distinct hospitalIds per procedure
   const hospitalCounts = await prisma.priceEntry.groupBy({
     by: ["procedureId"],
-    where: { procedureId: { in: procedureIds } },
+    where: { procedureId: { in: procedures.map((p) => p.id) } },
     _count: { hospitalId: true },
   });
 
@@ -114,5 +117,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  return NextResponse.json({ procedures: results, noData: false } satisfies ProcedureSearchResponse);
+  const response: ProcedureSearchResponse = { procedures: results, noData: false };
+  await redis.set(cacheKey, response, { ex: 3600 }); // 1h — refreshes on data upload
+  return NextResponse.json(response);
 }

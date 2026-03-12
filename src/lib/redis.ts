@@ -11,7 +11,7 @@ const noopRedis = {
 function makeClient() {
   if (!url) return null;
   const client = new IORedis(url, { lazyConnect: true, maxRetriesPerRequest: 1 });
-  client.on("error", () => {}); // suppress unhandled errors
+  client.on("error", (err: Error) => { console.error("[Redis]", err.message); });
   return client;
 }
 
