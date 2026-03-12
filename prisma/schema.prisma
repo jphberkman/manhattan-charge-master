@@ -84,3 +84,12 @@ model PriceEntry {
   @@index([procedureId, priceType, priceInCents])
   @@index([hospitalId, payerType, priceType])
 }
+
+model CptCode {
+  code        String   @id          // e.g. "27447"
+  description String                // e.g. "Total knee replacement"
+  category    String   @default("") // optional grouping
+  createdAt   DateTime @default(now())
+
+  @@index([description])
+}
