@@ -110,6 +110,9 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
   const [showInsurancePicker, setShowInsurancePicker] = useState(false);
   const [insurancePickerExpanded, setInsurancePickerExpanded] = useState(false);
 
+  // Background AI status — separate from phase so it never blocks hospital prices
+  const [aiStatus, setAiStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
+
   // Memoized props for HospitalCostComparison — prevents refetch on every parent re-render
   // (inline objects/arrays create new references each render, which defeats useCallback deps)
   const episodeTotals = useMemo(() => breakdown ? {
@@ -150,6 +153,7 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
     setHospitalPrices([]);
     setShowInsurancePicker(false);
     setInsurancePickerExpanded(false);
+    setAiStatus("idle");
     phaseTimers.current.forEach(clearTimeout);
     if (elapsedTimer.current)  { clearInterval(elapsedTimer.current);  elapsedTimer.current  = null; }
     if (progressTimer.current) { clearInterval(progressTimer.current); progressTimer.current = null; }
@@ -179,19 +183,21 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
       if (!res.ok || data.noData || !data.procedures.length) {
         dbMatchesRef.current = [];
         setPhase("no-data");
+        // No DB data — AI is the only source, show full loading UI
+        void runAiBreakdown(trimmed, insurance);
       } else {
         dbMatchesRef.current = data.procedures;
         setDbMatches(data.procedures);
         setSelectedMatch(data.procedures[0]);
         setPhase("db-results");
+        // DB data found — hospital prices show immediately, AI enriches in background
+        void runAiBackground(trimmed, insurance);
       }
     } catch {
       dbMatchesRef.current = [];
       setPhase("no-data");
+      void runAiBreakdown(trimmed, insurance);
     }
-
-    // Auto-start AI breakdown immediately after DB search
-    void runAiBreakdown(trimmed, insurance);
   };
 
   // ── AI loading animation ───────────────────────────────────────────────────
@@ -222,7 +228,77 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
   // Keep a ref so stale closures in runAiBreakdown can read current dbMatches
   const dbMatchesRef = useRef<ProcedureSearchResult[]>([]);
 
-  // ── Phase 2: AI breakdown ──────────────────────────────────────────────────
+  // ── Background AI — runs silently when DB data exists, never blocks hospital prices ──
+
+  const runAiBackground = async (q: string, ins: InsuranceSelection | null) => {
+    const trimmed = q.trim();
+    if (!trimmed) return;
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const isActive = () => abortRef.current === controller;
+
+    setAiStatus("loading");
+    setBreakdown(null);
+    setExpandedIds(new Set());
+
+    const timeoutId = setTimeout(() => controller.abort(), 90_000);
+    let got = false;
+
+    try {
+      const res = await fetch("/api/procedure-breakdown", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          query: trimmed,
+          insurerName: ins?.insurer  ?? null,
+          payerType:   ins?.payerType ?? null,
+          coinsurance,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.body) return;
+
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let currentEvent = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf("\n")) !== -1) {
+          const line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith("data: ") && currentEvent === "result") {
+            try {
+              const parsed = JSON.parse(line.slice(6).trim());
+              if (isActive()) {
+                got = true;
+                setBreakdown(parsed as ProcedureBreakdown);
+                onBreakdownReady?.(parsed as ProcedureBreakdown);
+                setAiStatus("done");
+                setInsurancePickerExpanded(false);
+              }
+            } catch { /* ignore malformed */ }
+          }
+        }
+      }
+
+      if (!got && isActive()) setAiStatus("error");
+    } catch {
+      if (isActive()) setAiStatus("error");
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+
+  // ── Phase 2: AI breakdown (primary — only used when no DB data) ──────────
 
   const runAiBreakdown = async (q: string, ins: InsuranceSelection | null) => {
     const trimmed = q.trim();
@@ -336,8 +412,13 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
 
   const handleInsuranceChange = (ins: InsuranceSelection | null) => {
     setInsurance(ins);
-    // Re-run AI with new insurance if we have a query and are past the search phase
-    if (query.trim() && (phase === "ai-loading" || phase === "ai-results" || phase === "db-results" || phase === "no-data")) {
+    if (!query.trim() || phase === "idle" || phase === "db-searching") return;
+    // DB-results: HospitalCostComparison re-fetches automatically via prop change.
+    // Re-run AI in background to update the itemized breakdown with insurer-specific rates.
+    if (phase === "db-results") {
+      void runAiBackground(query, ins);
+    } else {
+      // no-data / ai-* — AI is the only source, re-run full primary flow
       void runAiBreakdown(query, ins);
     }
   };
@@ -513,8 +594,8 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
         </div>
       )}
 
-      {/* ── DB results ── */}
-      {(phase === "db-results" || phase === "ai-loading" || phase === "ai-results") && selectedMatch && (
+      {/* ── Results — DB match path ── */}
+      {selectedMatch && phase !== "idle" && phase !== "db-searching" && (
         <>
           {/* Matched procedure card */}
           <div className="rounded-2xl border border-neutral-200 bg-slate-800 px-5 py-4">
@@ -588,7 +669,15 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
             </div>
           )}
 
-          {/* Hospital comparison — starts loading immediately on DB match, upgrades with breakdown data */}
+          {/* Background AI status indicator */}
+          {aiStatus === "loading" && (
+            <div className="flex items-center gap-2 rounded-xl border border-violet-100 bg-violet-50 px-4 py-2.5">
+              <Loader2 className="size-3.5 shrink-0 animate-spin text-violet-500" />
+              <p className="text-xs text-violet-700">Building itemized cost breakdown in background…</p>
+            </div>
+          )}
+
+          {/* Hospital comparison — loads immediately, upgrades silently when AI breakdown arrives */}
           <HospitalCostComparison
             cptCode={breakdown?.cptCode ?? selectedMatch.cptCode}
             procedureName={breakdown?.procedureName ?? selectedMatch.name}
@@ -663,8 +752,29 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
         </div>
       )}
 
-      {/* ── AI results ── */}
-      {phase === "ai-results" && breakdown && (
+      {/* ── AI-only results (no-data path) — hospital comparison + physicians ── */}
+      {phase === "ai-results" && breakdown && !selectedMatch && (
+        <>
+          <HospitalCostComparison
+            cptCode={breakdown.cptCode ?? ""}
+            procedureName={breakdown.procedureName}
+            insurance={insurance}
+            coinsurance={coinsurance}
+            episodeTotals={episodeTotals}
+            allCptCodes={allCptCodes}
+            onPricesLoaded={setHospitalPrices}
+          />
+          <PhysicianRecommendations
+            procedureName={breakdown.procedureName}
+            cptCode={breakdown.cptCode ?? null}
+            insurance={insurance}
+            hospitalPrices={hospitalPrices}
+          />
+        </>
+      )}
+
+      {/* ── AI breakdown card — appears below hospital prices in both paths ── */}
+      {breakdown && (
         <>
           {/* Procedure identification card */}
           <div className={cn(
