@@ -11,6 +11,8 @@ export interface ProcedureSearchResult {
   category: string;
   priceCount: number;
   hospitalCount: number;
+  /** Number of query keywords matched in the procedure name. */
+  matchScore: number;
 }
 
 export interface ProcedureSearchResponse {
@@ -82,17 +84,31 @@ export async function POST(req: NextRequest) {
     hospitalCounts.map((h) => [h.procedureId, h._count.hospitalId]),
   );
 
-  // 3. Build results sorted by price count descending (most data first)
-  const results: ProcedureSearchResult[] = procedures
-    .map((p) => ({
-      cptCode:       p.cptCode,
-      name:          p.name,
-      category:      p.category,
-      priceCount:    p._count.prices,
-      hospitalCount: hospitalCountMap[p.id] ?? 0,
-    }))
-    .filter((r) => r.priceCount > 0) // only return procedures that have actual price data
-    .sort((a, b) => b.priceCount - a.priceCount);
+  // 3. Score each procedure by how many query keywords appear in its name.
+  //    For complex queries (3+ keywords), only return procedures that match ≥2 keywords.
+  //    This prevents an "ankle X-ray" code from surfacing when the user describes
+  //    a surgical condition like "non-union ankle fracture" (only "ankle" would match).
+  const minScore = keywords.length >= 3 ? 2 : 1;
+
+  const scored = procedures
+    .map((p) => {
+      const nameLower  = p.name.toLowerCase();
+      const matchScore = keywords.filter((kw) => nameLower.includes(kw.toLowerCase())).length;
+      return {
+        cptCode:       p.cptCode,
+        name:          p.name,
+        category:      p.category,
+        priceCount:    p._count.prices,
+        hospitalCount: hospitalCountMap[p.id] ?? 0,
+        matchScore,
+      };
+    })
+    .filter((r) => r.priceCount > 0 && r.matchScore >= minScore);
+
+  // Sort: highest match score first, then by price count (most data)
+  const results: ProcedureSearchResult[] = scored.sort(
+    (a, b) => b.matchScore - a.matchScore || b.priceCount - a.priceCount,
+  );
 
   if (!results.length) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
