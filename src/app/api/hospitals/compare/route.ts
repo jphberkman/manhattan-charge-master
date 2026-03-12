@@ -172,15 +172,7 @@ export async function GET(req: NextRequest) {
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
-  // 1. Look up procedures by all CPT codes
-  const procedures = await prisma.procedure.findMany({
-    where: { cptCode: { in: allCptCodes } },
-    select: { id: true, cptCode: true, name: true },
-  });
-  const procedure = procedures.find((p) => p.cptCode === cptCode) ?? null;
-  const procedureIds = procedures.map((p) => p.id);
-
-  // 2. Fetch all DB price entries for matched procedures
+  // Single query with include — avoids 2 sequential round-trips (saves 10-15s on Neon cold-start)
   type PriceRow = {
     hospital: { id: string; name: string; address: string; lastSeeded: Date | null };
     payerName: string;
@@ -189,12 +181,21 @@ export async function GET(req: NextRequest) {
     priceType: string;
   };
 
-  const dbEntries: PriceRow[] = procedureIds.length
-    ? await prisma.priceEntry.findMany({
-        where: { procedureId: { in: procedureIds } },
+  const procedureResults = await prisma.procedure.findMany({
+    where: { cptCode: { in: allCptCodes } },
+    select: {
+      id: true,
+      cptCode: true,
+      name: true,
+      prices: {
         include: { hospital: { select: { id: true, name: true, address: true, lastSeeded: true } } },
-      })
-    : [];
+      },
+    },
+  });
+
+  const procedures = procedureResults.map(({ id, cptCode, name }) => ({ id, cptCode, name }));
+  const procedure = procedures.find((p) => p.cptCode === cptCode) ?? null;
+  const dbEntries: PriceRow[] = procedureResults.flatMap((p) => p.prices);
 
   // 3. Group price entries by canonical hospital ID
   type HospMap = {

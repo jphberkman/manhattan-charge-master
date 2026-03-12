@@ -8,6 +8,8 @@
  * Dataset: https://data.cms.gov/provider-summary-by-type-of-service/medicare-physician-other-practitioners
  */
 
+import { redis } from "@/lib/redis";
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export interface CmsUtilization {
@@ -51,6 +53,13 @@ export async function getCmsUtilization(
   npi: string,
   cptCode: string,
 ): Promise<CmsUtilization | null> {
+  // Redis cache — CMS data updates annually, so 24h TTL is safe
+  const cacheKey = `cms:${npi}:${cptCode}`;
+  try {
+    const cached = await redis.get<CmsUtilization>(cacheKey);
+    if (cached) return cached;
+  } catch { /* ignore Redis errors */ }
+
   try {
     const params = new URLSearchParams({
       rndrng_npi: npi,
@@ -65,16 +74,23 @@ export async function getCmsUtilization(
     if (!res.ok) return null;
 
     const data = (await res.json()) as Record<string, string>[];
-    if (!data.length) return null;
+    if (!data.length) {
+      // Cache null result too (avoid hammering CMS for unknown NPIs)
+      try { await redis.set(cacheKey, null, { ex: 3600 }); } catch { /* ignore */ }
+      return null;
+    }
 
     const row = data[0];
-    return {
+    const result: CmsUtilization = {
       npi,
       cptCode,
       totalServices: parseFloat(row.tot_srvcs ?? "0") || 0,
       totalBeneficiaries: parseFloat(row.tot_benes ?? "0") || 0,
       year: CMS_DATA_YEAR,
     };
+
+    try { await redis.set(cacheKey, result, { ex: 86400 }); } catch { /* ignore */ }
+    return result;
   } catch {
     return null;
   }

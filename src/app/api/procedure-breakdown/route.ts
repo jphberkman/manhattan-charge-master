@@ -122,32 +122,30 @@ async function fetchChargemasterData(query: string): Promise<CptPriceMap> {
 
   if (!words.length) return {};
 
+  // Single query with include — avoids 2 sequential round-trips (saves 10-15s on Neon cold-start)
   const procedures = await prisma.procedure.findMany({
     where: { OR: words.map((w) => ({ name: { contains: w, mode: "insensitive" as const } })) },
-    select: { id: true, cptCode: true, name: true },
+    select: {
+      cptCode: true,
+      name: true,
+      prices: { select: { priceInCents: true, priceType: true, payerType: true } },
+    },
     take: 40,
   });
 
   if (!procedures.length) return {};
 
-  const idToProc = Object.fromEntries(procedures.map((p) => [p.id, p]));
-
-  const rows = await prisma.priceEntry.findMany({
-    where: { procedureId: { in: procedures.map((p) => p.id) } },
-    select: { procedureId: true, priceInCents: true, priceType: true, payerType: true },
-  });
-
   const buckets: Record<string, { name: string; gross: number[]; negotiated: number[]; cash: number[] }> = {};
 
-  for (const row of rows) {
-    const proc = idToProc[row.procedureId];
-    if (!proc) continue;
-    buckets[proc.cptCode] ??= { name: proc.name, gross: [], negotiated: [], cash: [] };
-    const price = row.priceInCents / 100;
-    if (row.priceType === "gross") buckets[proc.cptCode].gross.push(price);
-    else if (row.payerType === "cash") buckets[proc.cptCode].cash.push(price);
-    else if (row.priceType === "negotiated" || row.priceType === "discounted")
-      buckets[proc.cptCode].negotiated.push(price);
+  for (const proc of procedures) {
+    for (const row of proc.prices) {
+      buckets[proc.cptCode] ??= { name: proc.name, gross: [], negotiated: [], cash: [] };
+      const price = row.priceInCents / 100;
+      if (row.priceType === "gross") buckets[proc.cptCode].gross.push(price);
+      else if (row.payerType === "cash") buckets[proc.cptCode].cash.push(price);
+      else if (row.priceType === "negotiated" || row.priceType === "discounted")
+        buckets[proc.cptCode].negotiated.push(price);
+    }
   }
 
   return Object.fromEntries(
@@ -195,7 +193,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Query is required" }, { status: 400 });
   }
 
-  const cacheKey = `breakdown3:${query.trim().toLowerCase()}|${insurerName ?? ""}|${payerType ?? ""}|${coinsurance}`;
+  // coinsurance is UI-only — doesn't affect price components, only the "you pay" calc in the client
+  const cacheKey = `breakdown3:${query.trim().toLowerCase()}|${insurerName ?? ""}|${payerType ?? ""}`;
 
   // ── SSE setup ──────────────────────────────────────────────────────────────
   const encoder = new TextEncoder();
