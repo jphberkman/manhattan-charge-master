@@ -195,7 +195,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Query is required" }, { status: 400 });
   }
 
-  const cacheKey = `breakdown2:${query.trim().toLowerCase()}|${insurerName ?? ""}|${payerType ?? ""}|${coinsurance}`;
+  const cacheKey = `breakdown3:${query.trim().toLowerCase()}|${insurerName ?? ""}|${payerType ?? ""}|${coinsurance}`;
 
   // ── SSE setup ──────────────────────────────────────────────────────────────
   const encoder = new TextEncoder();
@@ -232,14 +232,19 @@ export async function POST(req: NextRequest) {
 Your job is to produce a structured JSON cost breakdown for medical procedures.
 ${
   hasDbData
-    ? `REAL CHARGEMASTER DATA — for any component whose CPT code appears below, you MUST use these ranges.
-Do NOT go outside these bounds. Set "dataSource": "real" for those components.
+    ? `REAL CHARGEMASTER DATA — use these as reference ranges for matching CPT codes.
 ${chargemasterContext}
 
-For components with no matching CPT code in the table above, set "dataSource": "estimated"
-and use conservative NYC market estimates. Do not exaggerate prices.`
+IMPORTANT INTERPRETATION RULES:
+- These DB entries are often professional fee line items (surgeon only), NOT full episode prices.
+- A total knee replacement surgeon fee of $3,000–$5,000 is correct for that line item, but the
+  full episode (facility + implants + anesthesia) costs $50,000–$100,000 at Manhattan hospitals.
+- Use DB prices for the SPECIFIC component they represent (e.g. surgeon fee for that CPT).
+- Set "dataSource": "real" for components whose CPT matches the table above.
+- For all other components, use realistic full Manhattan market rates and set "dataSource": "estimated".
+- Do NOT let a low professional fee line item constrain your facility fee or implant cost estimates.`
     : `No chargemaster database matches found for this query.
-Set "dataSource": "estimated" for all components and use conservative NYC market estimates.`
+Set "dataSource": "estimated" for all components and use realistic Manhattan market rates.`
 }
 
 RULES:

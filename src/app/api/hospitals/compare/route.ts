@@ -86,10 +86,12 @@ const DB_NAME_TO_CANONICAL: Record<string, string> = {
 };
 
 /**
- * Minimum believable price for a full procedure.
- * Filters out fee-schedule fragments (e.g. a single CPT line-item at $12).
+ * Minimum believable price to include a DB entry in hospital comparison.
+ * Filters out tiny fee-schedule fragments (e.g. a $12 lab add-on code).
+ * Note: legitimate line items like $3–5K surgeon fees still pass through —
+ * those are handled by the episode-anchor calibration below.
  */
-const MIN_PROCEDURE_PRICE = 500;
+const MIN_PROCEDURE_PRICE = 100;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -151,7 +153,7 @@ export async function GET(req: NextRequest) {
 
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
-  const cacheKey = `compare3:${allCptCodes.sort().join(",")}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}|${episodeInsMedian ?? ""}|${episodeCashMedian ?? ""}`;
+  const cacheKey = `compare4:${allCptCodes.sort().join(",")}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}|${episodeInsMedian ?? ""}|${episodeCashMedian ?? ""}`;
   const cached = await redis.get<HospitalComparisonEntry[]>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
@@ -232,6 +234,9 @@ export async function GET(req: NextRequest) {
 
   // 4. Convert DB groups to comparison entries
   //    Use median to reduce outlier impact. No artificial tier multipliers.
+  //    If DB price looks like a single line item (< 30% of the AI episode estimate),
+  //    scale it up to episode level using the AI anchor and mark as "partial".
+  //    This handles chargemasters that list professional fees only, not full episode prices.
   const realEntries: Omit<HospitalComparisonEntry, "rank">[] = [];
   const coveredIds = new Set<string>();
 
@@ -242,15 +247,27 @@ export async function GET(req: NextRequest) {
 
     if (insuranceRate == null && cashPrice == null) continue;
 
-    // Derive missing price type from the other (standard ratio, no tier adjustment)
-    const effectiveInsuranceRate = insuranceRate ?? (cashPrice != null ? Math.round(cashPrice * 0.82) : null);
-    const effectiveCashPrice     = cashPrice     ?? (insuranceRate != null ? Math.round(insuranceRate * 1.22) : null);
+    let effectiveInsuranceRate = insuranceRate ?? (cashPrice != null ? Math.round(cashPrice * 0.82) : null);
+    let effectiveCashPrice     = cashPrice     ?? (insuranceRate != null ? Math.round(insuranceRate * 1.22) : null);
+
+    // Detect line-item prices: if the DB price is less than 30% of the AI-estimated
+    // episode total, it's almost certainly a single fee (surgeon, facility, etc.) rather
+    // than the full episode cost. Scale to episode level using the AI anchor.
+    // No tier multipliers — hospitals get differentiated by their own real data spread.
+    let dataQuality: HospitalComparisonEntry["dataQuality"] =
+      insuranceRate != null && cashPrice != null ? "real" : "partial";
+
+    if (episodeInsMedian && effectiveInsuranceRate && effectiveInsuranceRate < episodeInsMedian * 0.30) {
+      effectiveInsuranceRate = episodeInsMedian;
+      effectiveCashPrice     = episodeCashMedian ?? Math.round(episodeInsMedian * 1.22);
+      dataQuality            = "partial"; // clearly label — price is episode-scaled, not raw DB
+    } else if (episodeCashMedian && effectiveCashPrice && !effectiveInsuranceRate && effectiveCashPrice < episodeCashMedian * 0.30) {
+      effectiveCashPrice = episodeCashMedian;
+      dataQuality        = "partial";
+    }
 
     const patientCost = effectiveInsuranceRate != null ? Math.round(effectiveInsuranceRate * coinsurance) : null;
     const insurerPays = effectiveInsuranceRate != null ? Math.round(effectiveInsuranceRate * (1 - coinsurance)) : null;
-
-    const dataQuality: HospitalComparisonEntry["dataQuality"] =
-      insuranceRate != null && cashPrice != null ? "real" : "partial";
 
     realEntries.push({
       hospital: h.hospital,
