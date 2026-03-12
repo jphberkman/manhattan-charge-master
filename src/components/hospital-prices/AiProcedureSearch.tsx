@@ -231,8 +231,8 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
     setHospitalPrices([]);
     startAiPhases();
 
-    // Client-side timeout: abort after 55s so the UI never hangs indefinitely
-    const timeoutId = setTimeout(() => controller.abort(), 55_000);
+    // Client-side timeout: abort after 90s so the UI never hangs indefinitely
+    const timeoutId = setTimeout(() => controller.abort(), 90_000);
 
     let resultReceived = false;
 

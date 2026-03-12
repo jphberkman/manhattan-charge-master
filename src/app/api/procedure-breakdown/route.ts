@@ -216,9 +216,12 @@ export async function POST(req: NextRequest) {
         return;
       }
 
-      // 2. Pre-load real chargemaster data BEFORE calling AI
-      //    This gives Claude hard price bounds instead of making up numbers.
-      const chargemasterData = await fetchChargemasterData(query);
+      // 2. Pre-load real chargemaster data BEFORE calling AI (5s timeout so a
+      //    slow Neon cold-start never blocks the full analysis).
+      const chargemasterData = await Promise.race([
+        fetchChargemasterData(query),
+        new Promise<CptPriceMap>((resolve) => setTimeout(() => resolve({}), 5000)),
+      ]);
       const chargemasterContext = buildChargemasterContext(chargemasterData);
       const hasDbData = Object.keys(chargemasterData).length > 0;
 
@@ -339,25 +342,25 @@ and follow-up visits.`;
         rawBreakdown = JSON.parse(repairJson(match[0]));
       }
 
-      // 6. Server-side enrichment — authoritative DB override
-      //    Even if Claude used the pre-loaded data correctly, we re-query by the exact
-      //    component CPT codes it generated to ensure numbers are accurate and set
-      //    dataSource authoritatively (not trusting AI self-reporting).
+      // 6. Server-side enrichment — authoritative DB override (5s timeout)
       const cptCodes = rawBreakdown.components.map((c) => c.cptCode).filter(Boolean);
       const insPayerType = payerType ?? "commercial";
 
+      const dbTimeout = <T>(promise: Promise<T>, fallback: T): Promise<T> =>
+        Promise.race([promise, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), 5000))]);
+
       const [grossRows, cashRows, insRows] = await Promise.all([
-        prisma.priceEntry.findMany({
+        dbTimeout(prisma.priceEntry.findMany({
           where: { procedure: { cptCode: { in: cptCodes } }, priceType: "gross" },
           select: { priceInCents: true, procedure: { select: { cptCode: true } } },
           take: 500,
-        }),
-        prisma.priceEntry.findMany({
+        }), []),
+        dbTimeout(prisma.priceEntry.findMany({
           where: { procedure: { cptCode: { in: cptCodes } }, payerType: "cash" },
           select: { priceInCents: true, procedure: { select: { cptCode: true } } },
           take: 500,
-        }),
-        prisma.priceEntry.findMany({
+        }), []),
+        dbTimeout(prisma.priceEntry.findMany({
           where: {
             procedure: { cptCode: { in: cptCodes } },
             payerType: insPayerType,
@@ -365,7 +368,7 @@ and follow-up visits.`;
           },
           select: { priceInCents: true, procedure: { select: { cptCode: true } } },
           take: 500,
-        }),
+        }), []),
       ]);
 
       const grossByCpt = byCode(grossRows);
