@@ -317,10 +317,11 @@ For surgical cases include ALL of: pre-op labs/imaging, anesthesia, OR facility 
 surgeon fee, all implants individually, medications, post-op recovery, physical therapy,
 and follow-up visits.`;
 
-      // 4. Stream AI response
+      // 4. Stream AI response — use Haiku for speed (structured JSON task, 5-15s vs 40-60s for Sonnet)
       const text = await anthropicStream(
         {
-          max_tokens: 4096,
+          model: "claude-haiku-4-5-20251001",
+          max_tokens: 3000,
           cacheSystemPrompt: true,
           system: systemPrompt,
           messages: [{ role: "user", content: userPrompt }],
