@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/admin/prewarm",
+      "schedule": "0 9 * * *"
+    }
+  ]
+}
