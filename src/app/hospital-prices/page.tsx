@@ -1,8 +1,5 @@
-import { prisma } from "@/lib/prisma";
 import { HospitalPricesClient } from "@/components/hospital-prices/HospitalPricesClient";
 import { Search, TrendingDown, ShieldCheck, Activity, Lock } from "lucide-react";
-
-export const dynamic = "force-dynamic";
 
 export const metadata = {
   title: "Manhattan Medical Marketplace",
@@ -10,15 +7,10 @@ export const metadata = {
     "Find the true cost of any procedure at Manhattan hospitals. Compare insurance rates and cash prices — before you go.",
 };
 
-export default async function HospitalPricesPage() {
-  // Only fetch the count for the hero stat — procedures are lazy-loaded client-side
-  const [hospitals, priceCount] = await Promise.all([
-    prisma.hospital.findMany({
-      orderBy: { name: "asc" },
-      select: { id: true, name: true, lastSeeded: true },
-    }),
-    prisma.priceEntry.count(),
-  ]);
+export default function HospitalPricesPage() {
+  // No DB queries on page load — prices are fetched client-side on demand.
+  // This makes the page load instantly instead of waiting 10-15s for Neon to wake up.
+  const priceCount = "30,000+";
 
   return (
     <main className="min-h-screen bg-white">
@@ -82,7 +74,7 @@ export default async function HospitalPricesPage() {
           <div className="mt-10 flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
             <Stat value={`10+`} label="Manhattan hospitals" />
             <Divider />
-            <Stat value={priceCount > 0 ? priceCount.toLocaleString() : "30,000+"} label="price records" />
+            <Stat value={priceCount} label="price records" />
             <Divider />
             <Stat value="AI" label="procedure identification" />
           </div>
