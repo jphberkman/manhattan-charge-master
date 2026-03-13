@@ -89,7 +89,34 @@ model CptCode {
   code        String   @id          // e.g. "27447"
   description String                // e.g. "Total knee replacement"
   category    String   @default("") // optional grouping
+  /** CMS Medicare allowed amount (national avg, in USD). RVU-based benchmark. */
+  medicareRate  Float?
+  /** Average submitted charge (national avg, in USD). Chargemaster benchmark. */
+  avgCharge     Float?
+  /** Total Medicare services rendered nationally. Proxy for procedure frequency. */
+  totalServices Float?
   createdAt   DateTime @default(now())
 
   @@index([description])
+}
+
+/// Maps common patient conditions/symptoms to the most appropriate CPT procedures.
+/// Enables symptom-based search: "gallstones" → CPT 47562 (lap cholecystectomy).
+model ConditionMapping {
+  id          String   @id @default(cuid())
+  /** Natural language condition or symptom (e.g. "gallstones", "torn ACL"). */
+  condition   String
+  /** ICD-10-CM code if applicable (e.g. "K80.2", "S83.51"). */
+  icd10Code   String   @default("")
+  /** Target CPT code for the most common treatment. */
+  cptCode     String
+  /** Procedure name for display. */
+  procedureName String
+  /** Relevance weight (higher = more common treatment for this condition). */
+  weight      Int      @default(100)
+
+  @@unique([condition, cptCode])
+  @@index([condition])
+  @@index([icd10Code])
+  @@index([cptCode])
 }

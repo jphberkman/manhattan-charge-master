@@ -41,6 +41,37 @@ export async function searchCptCodes(
     // Split query into keywords for multi-word matching
     const keywords = trimmed.split(/\s+/).filter((w) => w.length > 2);
 
+    // Check condition mappings first — handles symptoms/diagnoses like "gallstones"
+    if (!isCodeQuery) {
+      const conditionMatches = await prisma.conditionMapping.findMany({
+        where: {
+          OR: [
+            { condition: { equals: trimmed, mode: "insensitive" } },
+            ...keywords.map((w) => ({ condition: { contains: w, mode: "insensitive" as const } })),
+          ],
+        },
+        orderBy: { weight: "desc" },
+        take: limit,
+      });
+
+      if (conditionMatches.length) {
+        const results: CptMatch[] = conditionMatches.map((m) => ({
+          code: m.cptCode,
+          description: m.procedureName,
+        }));
+        // Deduplicate by code
+        const seen = new Set<string>();
+        const deduped = results.filter((r) => {
+          if (seen.has(r.code)) return false;
+          seen.add(r.code);
+          return true;
+        });
+
+        try { await redis.set(cacheKey, deduped, { ex: 86400 }); } catch { /* ignore */ }
+        return deduped;
+      }
+    }
+
     let results: CptMatch[];
 
     if (isCodeQuery) {

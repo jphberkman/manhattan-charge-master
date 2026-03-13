@@ -162,7 +162,7 @@ export async function GET(req: NextRequest) {
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
   const allCptCodes = [cptCode];
-  const cacheKey = `compare7:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
+  const cacheKey = `compare8:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached, {
     headers: { "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800" },
@@ -251,6 +251,18 @@ export async function GET(req: NextRequest) {
   //    If DB price looks like a single line item (< 30% of the AI episode estimate),
   //    scale it up to episode level using the AI anchor and mark as "partial".
   //    This handles chargemasters that list professional fees only, not full episode prices.
+
+  // RVU-based price floor: Medicare allowed amount is the absolute minimum a procedure
+  // should cost. If a DB price is below 0.8× Medicare rate, it's a data artifact.
+  // Manhattan geographic adjustment factor is ~1.09.
+  const cptMedicareData = await prisma.cptCode.findUnique({
+    where: { code: cptCode },
+    select: { medicareRate: true, avgCharge: true },
+  });
+  const medicareFloor = cptMedicareData?.medicareRate
+    ? Math.round(cptMedicareData.medicareRate * 0.80)  // 80% of Medicare = absolute floor
+    : null;
+
   const realEntries: Omit<HospitalComparisonEntry, "rank">[] = [];
   const coveredIds = new Set<string>();
 
@@ -270,6 +282,16 @@ export async function GET(req: NextRequest) {
     if (effectiveCashPrice != null && effectiveInsuranceRate != null &&
         effectiveCashPrice < effectiveInsuranceRate * 0.60) {
       effectiveCashPrice = Math.round(effectiveInsuranceRate * 1.22);
+    }
+
+    // RVU floor check: if the negotiated rate is below 80% of the Medicare allowed
+    // amount, it's almost certainly a fragment or mismatched code. Replace with Medicare rate.
+    if (medicareFloor && effectiveInsuranceRate && effectiveInsuranceRate < medicareFloor) {
+      effectiveInsuranceRate = Math.round(cptMedicareData!.medicareRate! * 1.5); // Manhattan commercial ~1.5× Medicare
+      effectiveCashPrice = Math.round(effectiveInsuranceRate * 1.22);
+    }
+    if (medicareFloor && effectiveCashPrice && effectiveCashPrice < medicareFloor) {
+      effectiveCashPrice = Math.round((cptMedicareData!.medicareRate ?? medicareFloor) * 1.83); // Cash ~1.83× Medicare
     }
 
     // Detect line-item prices: if the DB price is less than 30% of the AI-estimated
