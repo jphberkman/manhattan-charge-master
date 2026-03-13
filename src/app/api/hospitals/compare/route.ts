@@ -162,7 +162,7 @@ export async function GET(req: NextRequest) {
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
   const allCptCodes = [cptCode];
-  const cacheKey = `compare8:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
+  const cacheKey = `compare9:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached, {
     headers: { "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800" },
