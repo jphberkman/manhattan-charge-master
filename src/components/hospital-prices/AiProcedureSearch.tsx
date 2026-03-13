@@ -593,51 +593,6 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
       {/* ── Results — DB match path ── */}
       {selectedMatch && phase !== "idle" && phase !== "db-searching" && (
         <>
-          {/* Matched procedure card */}
-          <div className="rounded-2xl border border-neutral-200 bg-slate-800 px-5 py-4">
-            <div className="flex items-start gap-4 flex-wrap">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/15">
-                <DatabaseZap className="size-5 text-white" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-green-500/20 px-2.5 py-0.5 text-xs font-semibold text-green-300">
-                    <CircleDot className="size-2.5" /> Real chargemaster data
-                  </span>
-                  <span className="text-xs text-white/40">{selectedMatch.priceCount.toLocaleString()} price entries · {selectedMatch.hospitalCount} hospitals</span>
-                </div>
-                <p className="mt-1 text-lg font-bold text-white">{selectedMatch.name}</p>
-                <p className="text-xs text-white/50">CPT {selectedMatch.cptCode} · {selectedMatch.category}</p>
-              </div>
-              <button
-                onClick={() => { reset(); setQuery(""); inputRef.current?.focus(); }}
-                className="shrink-0 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-medium text-white/80 transition-colors hover:bg-white/20"
-              >
-                Search again
-              </button>
-            </div>
-
-            {/* Other matches */}
-            {dbMatches.length > 1 && (
-              <div className="mt-3 flex flex-wrap gap-2 border-t border-white/10 pt-3">
-                <span className="text-xs text-white/40 mr-1 self-center">Also matched:</span>
-                {dbMatches.slice(1, 5).map((m) => (
-                  <button
-                    key={m.cptCode}
-                    onClick={() => setSelectedMatch(m)}
-                    className={cn(
-                      "rounded-full border px-3 py-1 text-xs font-medium transition-all",
-                      selectedMatch?.cptCode === m.cptCode
-                        ? "border-violet-400 bg-violet-600 text-white"
-                        : "border-white/20 bg-white/10 text-white/70 hover:bg-white/20",
-                    )}
-                  >
-                    {m.name} <span className="opacity-50">(CPT {m.cptCode})</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
 
           {/* Coinsurance selector */}
           {showInsurance && (
