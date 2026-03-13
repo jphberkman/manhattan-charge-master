@@ -145,6 +145,29 @@ Return ONLY this JSON (no markdown):
 }
 
 // ---------------------------------------------------------------------------
+// Revenue code detection — maps 4-digit NUBC codes to charge categories
+// ---------------------------------------------------------------------------
+const revenueCodeCache = new Map<string, { description: string; category: string; chargeType: string } | null>();
+
+/** Returns true if a code looks like a NUBC revenue code (3-4 digit, 0xxx pattern). */
+function looksLikeRevenueCode(code: string): boolean {
+  return /^0\d{2,3}$/.test(code.trim());
+}
+
+/** Looks up a revenue code from the DB (with in-memory cache). */
+async function resolveRevenueCode(code: string): Promise<{ description: string; category: string; chargeType: string } | null> {
+  const padded = code.trim().padStart(4, "0");
+  if (revenueCodeCache.has(padded)) return revenueCodeCache.get(padded) ?? null;
+
+  const row = await prisma.revenueCode.findUnique({
+    where: { code: padded },
+    select: { description: true, category: true, chargeType: true },
+  });
+  revenueCodeCache.set(padded, row);
+  return row;
+}
+
+// ---------------------------------------------------------------------------
 // Apply schema to one row of CSV columns
 // ---------------------------------------------------------------------------
 function applySchema(cols: string[], schema: FileSchema, fallback: string): NormalizedRow[] {
@@ -183,6 +206,23 @@ async function flushBatch(
   procedureCache: Map<string, string>
 ): Promise<{ hospitalsUpserted: number; proceduresUpserted: number; pricesInserted: number }> {
   let hospitalsUpserted = 0, proceduresUpserted = 0;
+
+  // Enrich rows with revenue code data when applicable
+  for (const row of batch) {
+    if (looksLikeRevenueCode(row.cptCode)) {
+      const revCode = await resolveRevenueCode(row.cptCode);
+      if (revCode) {
+        // Use revenue code description as procedure name if no name given
+        if (!row.procedureName || row.procedureName === row.cptCode) {
+          row.procedureName = revCode.description;
+        }
+        // Use revenue code category if no category given
+        if (row.category === "General") {
+          row.category = revCode.category || revCode.chargeType || "Facility";
+        }
+      }
+    }
+  }
 
   // Upsert hospitals and procedures first
   for (const row of batch) {

@@ -120,3 +120,14 @@ model ConditionMapping {
   @@index([icd10Code])
   @@index([cptCode])
 }
+
+/// NUBC Revenue Codes — maps 4-digit facility charge categories to CPT procedures.
+/// Hospitals often list facility fees by revenue code (e.g. 0360 = Operating Room)
+/// rather than CPT code. This table links them for price aggregation.
+model RevenueCode {
+  code        String   @id          // e.g. "0360"
+  description String                // e.g. "Operating Room Services"
+  category    String   @default("") // e.g. "Facility", "Ancillary", "Accommodation"
+  /** Related CPT code category (maps rev code to what type of charge it represents). */
+  chargeType  String   @default("") // "facility" | "supply" | "pharmacy" | "room" | "diagnostic" | "therapy" | "other"
+}
