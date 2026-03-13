@@ -24,12 +24,21 @@ export interface ProcedureSearchResponse {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Splits query into meaningful keywords (>3 chars) for DB matching. */
+/** Common stop words to exclude from keyword matching. */
+const STOP_WORDS = new Set([
+  "the", "and", "for", "with", "that", "this", "from", "have", "has",
+  "had", "not", "are", "was", "were", "been", "being", "what", "how",
+  "does", "need", "want", "like", "just", "get", "got", "can", "will",
+  "its", "my", "me", "our", "your",
+]);
+
+/** Splits query into meaningful keywords (>=2 chars, no stop words) for DB matching. */
 function extractKeywords(query: string): string[] {
   return query
     .trim()
+    .toLowerCase()
     .split(/\s+/)
-    .filter((w) => w.length > 3)
+    .filter((w) => w.length >= 2 && !STOP_WORDS.has(w))
     .slice(0, 6);
 }
 
@@ -80,7 +89,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  const cacheKey = `search3:${query.trim().toLowerCase()}`;
+  const cacheKey = `search4:${query.trim().toLowerCase()}`;
   const cached = await redis.get<ProcedureSearchResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
@@ -109,7 +118,8 @@ export async function POST(req: NextRequest) {
       hospitalCounts.map((h) => [h.procedureId, h._count.hospitalId]),
     );
 
-    const minScore = keywords.length >= 3 ? 2 : 1;
+    // Require majority of keywords to match — prevents "total" alone matching "Bilirubin Total"
+    const minScore = Math.max(1, Math.ceil(keywords.length * 0.6));
     const results = scoreAndFilter(pass1, hospitalCountMap, keywords, minScore);
 
     if (results.length) {
