@@ -282,7 +282,7 @@ async function validateSample(rows: NormalizedRow[]): Promise<ValidationSample[]
   const items = candidates.map(([code, rs], i) => {
     const comPrices = rs.filter((r) => r.payerType === "commercial" && r.priceInCents > 0).map((r) => r.priceInCents / 100);
     const cashPrices = rs.filter((r) => r.payerType === "cash" && r.priceInCents > 0).map((r) => r.priceInCents / 100);
-    return { index: i, cptCode: code, procedureName: rs[0].procedureName, realCommercial: comPrices.length ? [Math.min(...comPrices), Math.max(...comPrices)] : null, realCash: cashPrices.length ? [Math.min(...cashPrices), Math.max(...cashPrices)] : null };
+    return { index: i, cptCode: code, procedureName: rs[0].procedureName, realCommercial: comPrices.length ? [comPrices.reduce((a, b) => a < b ? a : b), comPrices.reduce((a, b) => a > b ? a : b)] : null, realCash: cashPrices.length ? [cashPrices.reduce((a, b) => a < b ? a : b), cashPrices.reduce((a, b) => a > b ? a : b)] : null };
   });
 
   const aiText = await anthropicCall({

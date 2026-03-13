@@ -13,24 +13,16 @@ const fmtNull = (v: number | null) => (v == null ? "—" : fmt.format(v));
 
 type SortKey = "rank" | "patientCost" | "cash" | "insurance" | "savings";
 
-interface EpisodeTotals {
-  insLow: number | null;
-  insHigh: number | null;
-  cashLow: number;
-  cashHigh: number;
-}
-
 interface Props {
   cptCode: string;
   procedureName: string;
   insurance: InsuranceSelection | null;
   coinsurance: number;
-  episodeTotals?: EpisodeTotals;
   allCptCodes?: string[];
   onPricesLoaded?: (entries: HospitalComparisonEntry[]) => void;
 }
 
-export function HospitalCostComparison({ cptCode, procedureName, insurance, coinsurance, episodeTotals, allCptCodes, onPricesLoaded }: Props) {
+export function HospitalCostComparison({ cptCode, procedureName, insurance, coinsurance, allCptCodes, onPricesLoaded }: Props) {
   const [entries, setEntries] = useState<HospitalComparisonEntry[]>([]);
   const [medicare, setMedicare] = useState<MedicareBenchmark | null>(null);
   const [loading, setLoading] = useState(false);
@@ -46,10 +38,6 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
       if (insurance?.payerType) params.set("payerType", insurance.payerType);
       if (insurance?.insurer) params.set("payerName", insurance.insurer);
       if (allCptCodes?.length) params.set("allCptCodes", allCptCodes.join(","));
-      if (episodeTotals?.insLow)  params.set("episodeInsLow",  String(episodeTotals.insLow));
-      if (episodeTotals?.insHigh) params.set("episodeInsHigh", String(episodeTotals.insHigh));
-      if (episodeTotals?.cashLow)  params.set("episodeCashLow",  String(episodeTotals.cashLow));
-      if (episodeTotals?.cashHigh) params.set("episodeCashHigh", String(episodeTotals.cashHigh));
       const res = await fetch(`/api/hospitals/compare?${params}`);
       const data: CompareResponse = await res.json();
       if (!res.ok) throw new Error((data as unknown as { error: string }).error ?? "Failed");
@@ -61,7 +49,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
     } finally {
       setLoading(false);
     }
-  }, [cptCode, coinsurance, insurance, episodeTotals, allCptCodes, onPricesLoaded]);
+  }, [cptCode, coinsurance, insurance, allCptCodes, onPricesLoaded]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -351,9 +339,6 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                               {isBestIns && showIns && <Badge color="green">Cheapest with insurance</Badge>}
                               {isBestCash && !showIns && <Badge color="green">Cheapest cash</Badge>}
                               {isBestCash && showIns && !isBestIns && <Badge color="blue">Cheapest cash</Badge>}
-                              {entry.dataQuality === "estimated" && <Badge color="amber">Estimated</Badge>}
-                              {entry.dataQuality === "partial" && <Badge color="amber">Partial data</Badge>}
-                              {entry.priceScope === "line-item" && <Badge color="amber">Fee schedule (scaled)</Badge>}
                             </div>
                             <div className="mt-0.5 flex items-center gap-2">
                               <p className="max-w-[200px] truncate text-xs text-neutral-400">{entry.hospital.address}</p>
@@ -453,9 +438,13 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
       )}
 
       {!loading && !error && entries.length === 0 && (
-        <p className="py-10 text-center text-sm text-neutral-400">
-          No hospital prices found for this procedure. Try a different procedure.
-        </p>
+        <div className="py-10 text-center">
+          <p className="text-sm font-semibold text-neutral-600">No chargemaster data found for this CPT code</p>
+          <p className="mt-1 text-xs text-neutral-400 max-w-md mx-auto">
+            None of the uploaded hospital price transparency files contain pricing for this specific procedure.
+            The AI cost breakdown above is based on clinical guidelines and market rates.
+          </p>
+        </div>
       )}
     </div>
   );

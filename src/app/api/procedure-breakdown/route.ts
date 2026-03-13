@@ -77,9 +77,20 @@ type CptPriceMap = Record<
   { name: string; gross: PriceRange | null; negotiated: PriceRange | null; cash: PriceRange | null }
 >;
 
+function safeMin(arr: number[]): number {
+  let m = arr[0];
+  for (let i = 1; i < arr.length; i++) if (arr[i] < m) m = arr[i];
+  return m;
+}
+function safeMax(arr: number[]): number {
+  let m = arr[0];
+  for (let i = 1; i < arr.length; i++) if (arr[i] > m) m = arr[i];
+  return m;
+}
+
 function buildRange(prices: number[]): PriceRange | null {
   if (!prices.length) return null;
-  return { min: Math.min(...prices), max: Math.max(...prices), count: prices.length };
+  return { min: safeMin(prices), max: safeMax(prices), count: prices.length };
 }
 
 function formatRangeLine(label: string, range: PriceRange | null): string | null {
@@ -119,13 +130,21 @@ function byCode(
  * Pass 2: NLM CPT API lookup → retry DB by exact CPT codes (handles symptom descriptions).
  * Returns { priceMap, nlmHint } — nlmHint is the top NLM CPT match for the AI prompt.
  */
+/** Common words that match too many chargemaster entries and add noise. */
+const CHARGEMASTER_STOP = new Set([
+  "need", "surgery", "surgical", "procedure", "operation", "treatment", "repair",
+  "have", "want", "like", "just", "been", "pain", "right", "left",
+  "doctor", "told", "recommend", "recommended", "diagnosed",
+]);
+
 async function fetchChargemasterData(
   query: string,
 ): Promise<{ priceMap: CptPriceMap; nlmHint: string | null }> {
   const words = query
     .trim()
+    .toLowerCase()
     .split(/\s+/)
-    .filter((w) => w.length > 3)
+    .filter((w) => w.length > 3 && !CHARGEMASTER_STOP.has(w))
     .slice(0, 6);
 
   // Run keyword DB search and NLM CPT lookup in parallel
@@ -136,7 +155,7 @@ async function fetchChargemasterData(
           select: {
             cptCode: true,
             name: true,
-            prices: { select: { priceInCents: true, priceType: true, payerType: true } },
+            prices: { select: { priceInCents: true, priceType: true, payerType: true }, take: 200 },
           },
           take: 40,
         })
@@ -158,7 +177,7 @@ async function fetchChargemasterData(
           select: {
             cptCode: true,
             name: true,
-            prices: { select: { priceInCents: true, priceType: true, payerType: true } },
+            prices: { select: { priceInCents: true, priceType: true, payerType: true }, take: 200 },
           },
           take: 40,
         })
@@ -229,7 +248,7 @@ export async function POST(req: NextRequest) {
   }
 
   // coinsurance is UI-only — doesn't affect price components, only the "you pay" calc in the client
-  const cacheKey = `breakdown3:${query.trim().toLowerCase()}|${insurerName ?? ""}|${payerType ?? ""}`;
+  const cacheKey = `breakdown4:${query.trim().toLowerCase()}|${insurerName ?? ""}|${payerType ?? ""}`;
 
   // ── SSE setup ──────────────────────────────────────────────────────────────
   const encoder = new TextEncoder();
@@ -430,16 +449,16 @@ and follow-up visits.`;
         return {
           ...comp,
           ...(gross.length && {
-            chargemasterLow: Math.round(Math.min(...gross)),
-            chargemasterHigh: Math.round(Math.max(...gross)),
+            chargemasterLow: Math.round(safeMin(gross)),
+            chargemasterHigh: Math.round(safeMax(gross)),
           }),
           ...(ins.length && {
-            insuranceLow: Math.round(Math.min(...ins)),
-            insuranceHigh: Math.round(Math.max(...ins)),
+            insuranceLow: Math.round(safeMin(ins)),
+            insuranceHigh: Math.round(safeMax(ins)),
           }),
           ...(cash.length && {
-            cashLow: Math.round(Math.min(...cash)),
-            cashHigh: Math.round(Math.max(...cash)),
+            cashLow: Math.round(safeMin(cash)),
+            cashHigh: Math.round(safeMax(cash)),
           }),
           dataSource: "real" as const,
         };

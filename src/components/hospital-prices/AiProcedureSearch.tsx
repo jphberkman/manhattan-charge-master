@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Search, Loader2, ChevronDown, ChevronUp, CircleDot,
   Stethoscope, Wrench, AlertCircle, ListCollapse, Sparkles,
@@ -113,14 +113,6 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
   // Background AI status — separate from phase so it never blocks hospital prices
   const [aiStatus, setAiStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
 
-  // Memoized props for HospitalCostComparison — prevents refetch on every parent re-render
-  // (inline objects/arrays create new references each render, which defeats useCallback deps)
-  const episodeTotals = useMemo(() => breakdown ? {
-    insLow:   breakdown.insuranceTotalLow,
-    insHigh:  breakdown.insuranceTotalHigh,
-    cashLow:  breakdown.cashTotalLow,
-    cashHigh: breakdown.cashTotalHigh,
-  } : undefined, [breakdown]);
 
   const inputRef      = useRef<HTMLInputElement>(null);
   const phaseTimers   = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -634,7 +626,7 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
             procedureName={breakdown?.procedureName ?? selectedMatch.name}
             insurance={insurance}
             coinsurance={coinsurance}
-            episodeTotals={episodeTotals}
+
             onPricesLoaded={setHospitalPrices}
           />
 
@@ -710,7 +702,7 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
             procedureName={breakdown.procedureName}
             insurance={insurance}
             coinsurance={coinsurance}
-            episodeTotals={episodeTotals}
+
             onPricesLoaded={setHospitalPrices}
           />
           <PhysicianRecommendations
