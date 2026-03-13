@@ -13,7 +13,6 @@ export interface ProcedureSearchResult {
   category: string;
   priceCount: number;
   hospitalCount: number;
-  /** Number of query keywords matched in the procedure name. */
   matchScore: number;
 }
 
@@ -24,96 +23,50 @@ export interface ProcedureSearchResponse {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Common stop words to exclude from keyword matching. */
-const STOP_WORDS = new Set([
-  "the", "and", "for", "with", "that", "this", "from", "have", "has",
-  "had", "not", "are", "was", "were", "been", "being", "what", "how",
-  "does", "need", "want", "like", "just", "get", "got", "can", "will",
-  "its", "my", "me", "our", "your",
-]);
-
-/** Splits query into meaningful keywords (>=2 chars, no stop words) for DB matching. */
-function extractKeywords(query: string): string[] {
-  return query
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => w.length >= 2 && !STOP_WORDS.has(w))
-    .slice(0, 6);
-}
-
-/** Returns true if the query looks like a CPT code (4-5 digits, optionally with suffix). */
 function looksLikeCptCode(query: string): boolean {
   return /^\d{4,5}[A-Z]?$/i.test(query.trim());
 }
 
 type ProcRow = { id: string; cptCode: string; name: string; category: string; _count: { prices: number } };
 
-/** Fetches hospital counts for a set of procedures and builds a map. */
-async function getHospitalCountMap(procedures: ProcRow[]): Promise<Record<string, number>> {
-  if (!procedures.length) return {};
-  const hospitalCounts = await prisma.priceEntry.groupBy({
-    by: ["procedureId"],
-    where: { procedureId: { in: procedures.map((p) => p.id) } },
-    _count: { hospitalId: true },
-  });
-  return Object.fromEntries(
-    hospitalCounts.map((h) => [h.procedureId, h._count.hospitalId]),
-  );
-}
-
-/** Scores procedure results by keyword relevance. */
-function scoreResults(
-  procedures: ProcRow[],
-  hospitalCountMap: Record<string, number>,
-  keywords: string[],
-): ProcedureSearchResult[] {
-  return procedures
-    .map((p) => {
-      const nameLower = p.name.toLowerCase();
-      const matchScore = keywords.length
-        ? keywords.filter((kw) => nameLower.includes(kw)).length
-        : 1; // CPT-code or CPT-lookup results — treat all as full match
-      return {
-        cptCode: p.cptCode,
-        name: p.name,
-        category: p.category,
-        priceCount: p._count.prices,
-        hospitalCount: hospitalCountMap[p.id] ?? 0,
-        matchScore,
-      };
-    })
-    .filter((r) => r.priceCount > 0);
-}
-
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   const { query } = await req.json() as { query: string };
-
   if (!query?.trim()) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  const isCptQuery = looksLikeCptCode(query);
-  const keywords   = extractKeywords(query);
-
-  if (!isCptQuery && !keywords.length) {
-    return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
-  }
-
-  const cacheKey = `search5:${query.trim().toLowerCase()}`;
+  const cacheKey = `search6:${query.trim().toLowerCase()}`;
   const cached = await redis.get<ProcedureSearchResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
-  // ── Run Pass 1 (keyword search) and Pass 2 (CPT lookup) in PARALLEL ──────
-  // This ensures we find chargemaster data even when keyword names don't match
-  // (e.g. user says "hip replacement" but chargemaster has "arthroplasty").
+  const isCptQuery = looksLikeCptCode(query);
 
-  const pass1Promise = prisma.procedure.findMany({
-    where: isCptQuery
-      ? { cptCode: { contains: query.trim(), mode: "insensitive" } }
-      : { OR: keywords.map((w) => ({ name: { contains: w, mode: "insensitive" as const } })) },
+  // ── Step 1: Resolve query to CPT codes ────────────────────────────────────
+  // For natural language queries, use the CPT lookup (condition mappings +
+  // CptCode table with proper medical descriptions). This is reliable because
+  // it searches against real medical descriptions, not cryptic chargemaster names.
+  // For CPT code queries, search directly by code.
+
+  let cptCodes: string[] = [];
+
+  if (isCptQuery) {
+    cptCodes = [query.trim()];
+  } else {
+    const cptMatches = await searchCptCodes(query, 10);
+    cptCodes = cptMatches.map((m) => m.code);
+  }
+
+  if (!cptCodes.length) {
+    return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
+  }
+
+  // ── Step 2: Find chargemaster procedures by exact CPT code ────────────────
+  // This is fast (indexed lookup) and accurate (no fuzzy name matching).
+
+  const procedures = await prisma.procedure.findMany({
+    where: { cptCode: { in: cptCodes } },
     select: {
       id: true, cptCode: true, name: true, category: true,
       _count: { select: { prices: true } },
@@ -121,79 +74,38 @@ export async function POST(req: NextRequest) {
     take: 20,
   });
 
-  const pass2Promise = !isCptQuery
-    ? searchCptCodes(query, 8).then(async (cptMatches) => {
-        if (!cptMatches.length) return [] as ProcRow[];
-        return prisma.procedure.findMany({
-          where: { cptCode: { in: cptMatches.map((m) => m.code) } },
-          select: {
-            id: true, cptCode: true, name: true, category: true,
-            _count: { select: { prices: true } },
-          },
-          take: 20,
-        });
-      })
-    : Promise.resolve([] as ProcRow[]);
+  const withPrices = procedures.filter((p) => p._count.prices > 0);
 
-  const [pass1, pass2] = await Promise.all([pass1Promise, pass2Promise]);
-
-  // Merge and deduplicate — Pass 2 (CPT-resolved) results are more reliable
-  const seenCpt = new Set<string>();
-  const merged: ProcRow[] = [];
-
-  // Add Pass 2 results first (CPT-resolved, higher confidence)
-  for (const p of pass2) {
-    if (!seenCpt.has(p.cptCode)) {
-      seenCpt.add(p.cptCode);
-      merged.push(p);
-    }
-  }
-  // Add Pass 1 results that weren't already found
-  for (const p of pass1) {
-    if (!seenCpt.has(p.cptCode)) {
-      seenCpt.add(p.cptCode);
-      merged.push(p);
-    }
-  }
-
-  if (!merged.length) {
+  if (!withPrices.length) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  const hospitalCountMap = await getHospitalCountMap(merged);
+  // ── Step 3: Get hospital counts and build results ─────────────────────────
 
-  // Score Pass 1 results by keyword relevance, Pass 2 results get full score
-  const pass2Ids = new Set(pass2.map((p) => p.id));
-  const scored = scoreResults(merged, hospitalCountMap, keywords);
-
-  // Boost Pass 2 (CPT-resolved) results — they matched the clinical concept
-  for (const r of scored) {
-    const proc = merged.find((p) => p.cptCode === r.cptCode);
-    if (proc && pass2Ids.has(proc.id)) {
-      r.matchScore = Math.max(r.matchScore, keywords.length); // full score
-    }
-  }
-
-  // Require majority of keywords for Pass 1-only results (prevents false positives)
-  const minScoreForKeyword = Math.max(1, Math.ceil(keywords.length * 0.6));
-  const filtered = scored.filter((r) => {
-    const proc = merged.find((p) => p.cptCode === r.cptCode);
-    // Pass 2 results always pass — they matched via CPT resolution
-    if (proc && pass2Ids.has(proc.id)) return true;
-    // Pass 1-only results need majority keyword match
-    return r.matchScore >= minScoreForKeyword;
+  const hospitalCounts = await prisma.priceEntry.groupBy({
+    by: ["procedureId"],
+    where: { procedureId: { in: withPrices.map((p) => p.id) } },
+    _count: { hospitalId: true },
   });
+  const hospitalCountMap = Object.fromEntries(
+    hospitalCounts.map((h) => [h.procedureId, h._count.hospitalId]),
+  );
 
-  // Sort: highest match score first, then by price count (more data = more reliable)
-  filtered.sort((a, b) => b.matchScore - a.matchScore || b.priceCount - a.priceCount);
+  // Preserve the order from CPT lookup (most relevant first)
+  const cptOrder = new Map(cptCodes.map((c, i) => [c, i]));
+  const results: ProcedureSearchResult[] = withPrices
+    .map((p) => ({
+      cptCode: p.cptCode,
+      name: p.name,
+      category: p.category,
+      priceCount: p._count.prices,
+      hospitalCount: hospitalCountMap[p.id] ?? 0,
+      matchScore: cptCodes.length - (cptOrder.get(p.cptCode) ?? cptCodes.length),
+    }))
+    .sort((a, b) => b.matchScore - a.matchScore || b.priceCount - a.priceCount)
+    .slice(0, 10);
 
-  const results = filtered.slice(0, 10);
-
-  if (results.length) {
-    const response: ProcedureSearchResponse = { procedures: results, noData: false };
-    await redis.set(cacheKey, response, { ex: 3600 });
-    return NextResponse.json(response);
-  }
-
-  return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
+  const response: ProcedureSearchResponse = { procedures: results, noData: false };
+  await redis.set(cacheKey, response, { ex: 3600 });
+  return NextResponse.json(response);
 }
