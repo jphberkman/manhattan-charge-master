@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  const cacheKey = `search6:${query.trim().toLowerCase()}`;
+  const cacheKey = `search7:${query.trim().toLowerCase()}`;
   const cached = await redis.get<ProcedureSearchResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
