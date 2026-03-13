@@ -50,12 +50,15 @@ export async function POST(req: NextRequest) {
   // For CPT code queries, search directly by code.
 
   let cptCodes: string[] = [];
+  const cptDescriptions = new Map<string, string>();
 
   if (isCptQuery) {
     cptCodes = [query.trim()];
   } else {
     const cptMatches = await searchCptCodes(query, 10);
     cptCodes = cptMatches.map((m) => m.code);
+    // Store human-readable descriptions from CPT lookup
+    for (const m of cptMatches) cptDescriptions.set(m.code, m.description);
   }
 
   if (!cptCodes.length) {
@@ -63,7 +66,6 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Step 2: Find chargemaster procedures by exact CPT code ────────────────
-  // This is fast (indexed lookup) and accurate (no fuzzy name matching).
 
   const procedures = await prisma.procedure.findMany({
     where: { cptCode: { in: cptCodes } },
@@ -80,6 +82,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
+  // Fetch human-readable names from CptCode table for any codes we don't already have
+  const missingDescs = withPrices.filter((p) => !cptDescriptions.has(p.cptCode)).map((p) => p.cptCode);
+  if (missingDescs.length) {
+    const cptRows = await prisma.cptCode.findMany({
+      where: { code: { in: missingDescs } },
+      select: { code: true, description: true },
+    });
+    for (const r of cptRows) cptDescriptions.set(r.code, r.description);
+  }
+
   // ── Step 3: Get hospital counts and build results ─────────────────────────
 
   const hospitalCounts = await prisma.priceEntry.groupBy({
@@ -92,11 +104,12 @@ export async function POST(req: NextRequest) {
   );
 
   // Preserve the order from CPT lookup (most relevant first)
+  // Use human-readable CptCode description instead of cryptic chargemaster name
   const cptOrder = new Map(cptCodes.map((c, i) => [c, i]));
   const results: ProcedureSearchResult[] = withPrices
     .map((p) => ({
       cptCode: p.cptCode,
-      name: p.name,
+      name: cptDescriptions.get(p.cptCode) ?? p.name,
       category: p.category,
       priceCount: p._count.prices,
       hospitalCount: hospitalCountMap[p.id] ?? 0,
