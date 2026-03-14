@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma";
 import { redis } from "@/lib/redis";
 import { searchCptCodes } from "@/lib/cpt-lookup";
 
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  const cacheKey = `search7:${query.trim().toLowerCase()}`;
+  const cacheKey = `search8:${query.trim().toLowerCase()}`;
   const cached = await redis.get<ProcedureSearchResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
@@ -94,13 +95,14 @@ export async function POST(req: NextRequest) {
 
   // ── Step 3: Get hospital counts and build results ─────────────────────────
 
-  const hospitalCounts = await prisma.priceEntry.groupBy({
-    by: ["procedureId"],
-    where: { procedureId: { in: withPrices.map((p) => p.id) } },
-    _count: { hospitalId: true },
-  });
+  const hospitalCounts = await prisma.$queryRaw<{ procedureId: string; cnt: bigint }[]>`
+    SELECT "procedureId", COUNT(DISTINCT "hospitalId") AS cnt
+    FROM "PriceEntry"
+    WHERE "procedureId" IN (${Prisma.join(withPrices.map((p) => p.id))})
+    GROUP BY "procedureId"
+  `;
   const hospitalCountMap = Object.fromEntries(
-    hospitalCounts.map((h) => [h.procedureId, h._count.hospitalId]),
+    hospitalCounts.map((h) => [h.procedureId, Number(h.cnt)]),
   );
 
   // Preserve the order from CPT lookup (most relevant first)
