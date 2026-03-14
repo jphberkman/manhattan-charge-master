@@ -55,6 +55,7 @@ const MAPPINGS: [string, string, string, string, number][] = [
   ["ankle fracture ORIF", "S82.891A", "27766", "Ankle fracture repair (ORIF)", 100],
   ["broken ankle", "S82.891A", "27766", "Ankle fracture repair (ORIF)", 100],
   ["bunion", "M20.11", "28296", "Bunionectomy", 100],
+  ["bunionectomy", "M20.11", "28296", "Bunionectomy", 100],
   ["trigger finger", "M65.30", "26055", "Trigger finger release", 100],
 
   // General surgery
@@ -180,7 +181,21 @@ const MAPPINGS: [string, string, string, string, number][] = [
   ["melanoma", "C43.9", "11606", "Melanoma excision", 100],
 ];
 
+// Old mappings to clean up (condition+cptCode pairs that have been superseded)
+const STALE_MAPPINGS: [string, string][] = [
+  ["ankle fracture", "27792"],
+  ["broken ankle", "27792"],
+  ["ankle fracture ORIF", "27792"],
+  ["wisdom teeth", "D7240"],
+];
+
 async function main() {
+  // Clean up stale mappings first
+  for (const [condition, cptCode] of STALE_MAPPINGS) {
+    await prisma.conditionMapping.deleteMany({ where: { condition, cptCode } });
+  }
+  if (STALE_MAPPINGS.length) console.log(`Cleaned up ${STALE_MAPPINGS.length} stale mappings.`);
+
   console.log(`Seeding ${MAPPINGS.length} condition → CPT mappings...\n`);
 
   let upserted = 0;
