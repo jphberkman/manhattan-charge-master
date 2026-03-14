@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { Prisma } from "@/generated/prisma";
 import { redis } from "@/lib/redis";
 import { searchCptCodes } from "@/lib/cpt-lookup";
 
@@ -29,8 +28,6 @@ function looksLikeCptCode(query: string): boolean {
   return /^\d{4,5}[A-Z]?$/i.test(query.trim());
 }
 
-type ProcRow = { id: string; cptCode: string; name: string; category: string; _count: { prices: number } };
-
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -46,10 +43,6 @@ export async function POST(req: NextRequest) {
   const isCptQuery = looksLikeCptCode(query);
 
   // ── Step 1: Resolve query to CPT codes ────────────────────────────────────
-  // For natural language queries, use the CPT lookup (condition mappings +
-  // CptCode table with proper medical descriptions). This is reliable because
-  // it searches against real medical descriptions, not cryptic chargemaster names.
-  // For CPT code queries, search directly by code.
 
   let cptCodes: string[] = [];
   const cptDescriptions = new Map<string, string>();
@@ -59,7 +52,6 @@ export async function POST(req: NextRequest) {
   } else {
     const cptMatches = await searchCptCodes(query, 10);
     cptCodes = cptMatches.map((m) => m.code);
-    // Store human-readable descriptions from CPT lookup
     for (const m of cptMatches) cptDescriptions.set(m.code, m.description);
   }
 
@@ -67,25 +59,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  // ── Step 2: Find chargemaster procedures by exact CPT code ────────────────
+  // ── Step 2: Find procedures with basic info (no expensive counts) ─────────
+  // Skip _count.prices and COUNT(DISTINCT hospitalId) — they scan millions of
+  // rows on Neon and cause 30+ second timeouts. Use lightweight existence check.
 
   const procedures = await prisma.procedure.findMany({
     where: { cptCode: { in: cptCodes } },
-    select: {
-      id: true, cptCode: true, name: true, category: true,
-      _count: { select: { prices: true } },
-    },
+    select: { id: true, cptCode: true, name: true, category: true },
     take: 20,
   });
 
-  const withPrices = procedures.filter((p) => p._count.prices > 0);
-
-  if (!withPrices.length) {
+  if (procedures.length === 0) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
   // Fetch human-readable names from CptCode table for any codes we don't already have
-  const missingDescs = withPrices.filter((p) => !cptDescriptions.has(p.cptCode)).map((p) => p.cptCode);
+  const missingDescs = procedures.filter((p) => !cptDescriptions.has(p.cptCode)).map((p) => p.cptCode);
   if (missingDescs.length) {
     const cptRows = await prisma.cptCode.findMany({
       where: { code: { in: missingDescs } },
@@ -94,31 +83,21 @@ export async function POST(req: NextRequest) {
     for (const r of cptRows) cptDescriptions.set(r.code, r.description);
   }
 
-  // ── Step 3: Get hospital counts and build results ─────────────────────────
+  // ── Step 3: Build results ─────────────────────────────────────────────────
+  // We skip expensive per-procedure hospital/price counts. The compare API
+  // provides detailed per-hospital data when the user selects a procedure.
 
-  const hospitalCounts = await prisma.$queryRaw<{ procedureId: string; cnt: bigint }[]>`
-    SELECT "procedureId", COUNT(DISTINCT "hospitalId") AS cnt
-    FROM "PriceEntry"
-    WHERE "procedureId" IN (${Prisma.join(withPrices.map((p) => p.id))})
-    GROUP BY "procedureId"
-  `;
-  const hospitalCountMap = Object.fromEntries(
-    hospitalCounts.map((h) => [h.procedureId, Number(h.cnt)]),
-  );
-
-  // Preserve the order from CPT lookup (most relevant first)
-  // Use human-readable CptCode description instead of cryptic chargemaster name
   const cptOrder = new Map(cptCodes.map((c, i) => [c, i]));
-  const results: ProcedureSearchResult[] = withPrices
+  const results: ProcedureSearchResult[] = procedures
     .map((p) => ({
       cptCode: p.cptCode,
       name: cptDescriptions.get(p.cptCode) ?? p.name,
       category: p.category,
-      priceCount: p._count.prices,
-      hospitalCount: hospitalCountMap[p.id] ?? 0,
+      priceCount: 1, // placeholder — real counts shown in compare view
+      hospitalCount: 0, // placeholder — real counts shown in compare view
       matchScore: cptCodes.length - (cptOrder.get(p.cptCode) ?? cptCodes.length),
     }))
-    .sort((a, b) => b.matchScore - a.matchScore || b.priceCount - a.priceCount)
+    .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, 10);
 
   const response: ProcedureSearchResponse = { procedures: results, noData: false };
