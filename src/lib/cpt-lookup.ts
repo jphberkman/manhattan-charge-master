@@ -88,12 +88,12 @@ export async function searchCptCodes(
         SELECT "cptCode", "procedureName", weight,
           (${Prisma.join(
             patterns.map((p) => Prisma.sql`CASE WHEN LOWER(condition) LIKE ${p} THEN 1 ELSE 0 END`),
-            Prisma.sql` + `,
+            " + ",
           )}) AS score
         FROM "ConditionMapping"
         WHERE ${Prisma.join(
           patterns.map((p) => Prisma.sql`LOWER(condition) LIKE ${p}`),
-          Prisma.sql` OR `,
+          " OR ",
         )}
         ORDER BY score DESC, weight DESC
         LIMIT ${limit * 2}
@@ -103,12 +103,12 @@ export async function searchCptCodes(
         SELECT code, description,
           (${Prisma.join(
             patterns.map((p) => Prisma.sql`CASE WHEN LOWER(description) LIKE ${p} THEN 1 ELSE 0 END`),
-            Prisma.sql` + `,
+            " + ",
           )}) AS score
         FROM "CptCode"
         WHERE ${Prisma.join(
           patterns.map((p) => Prisma.sql`LOWER(description) LIKE ${p}`),
-          Prisma.sql` OR `,
+          " OR ",
         )}
         ORDER BY score DESC
         LIMIT ${limit * 2}
