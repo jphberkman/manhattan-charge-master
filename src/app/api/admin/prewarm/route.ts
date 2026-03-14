@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { redis } from "@/lib/redis";
-import { prisma } from "@/lib/prisma";
-import { searchCptCodes } from "@/lib/cpt-lookup";
 
 export const maxDuration = 300; // 5 min — needs time to warm all combos
 
 /**
- * Pre-warms Redis cache for top procedures.
+ * Pre-warms Redis cache for top procedures by calling the real API endpoints.
  *
  * GET /api/admin/prewarm — warms procedure-search + hospitals/compare caches.
- * Skips the AI breakdown (expensive) — those get cached on first real user hit.
- * Focuses on the fast DB paths that benefit most from cache warming.
- *
  * Can be triggered by Vercel Cron, GitHub Actions, or manually.
  */
 
@@ -30,15 +24,15 @@ const TOP_QUERIES = [
   "lung biopsy", "sleep study", "root canal", "physical therapy",
   "coronary stent", "gastric bypass", "ear tubes", "LASIK",
   "prostatectomy", "colon cancer surgery", "egg retrieval IVF",
+  "bunionectomy", "MRI knee", "CT scan abdomen", "wisdom teeth extraction",
 ];
 
-const PAYER_TYPES = ["commercial", "medicare", "cash"];
+const INSURERS = ["Cigna", "Aetna", "United", "Empire"];
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
-  // Allow if: no secret configured, or correct secret, or localhost
   if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
     const host = req.headers.get("host") ?? "";
     if (!host.includes("localhost")) {
@@ -46,83 +40,43 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const results = { warmed: 0, skipped: 0, errors: 0 };
+  const baseUrl = req.nextUrl.origin;
+  const results = { searchWarmed: 0, compareWarmed: 0, errors: 0 };
 
   for (const query of TOP_QUERIES) {
     try {
-      // 1. Warm CPT lookup cache
-      const cptMatches = await searchCptCodes(query, 8);
+      // 1. Warm procedure-search cache (calls the real endpoint)
+      const searchRes = await fetch(`${baseUrl}/api/procedure-search`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query }),
+        signal: AbortSignal.timeout(30000),
+      });
 
-      // 2. Warm procedure-search cache
-      const searchKey = `search3:${query.trim().toLowerCase()}`;
-      const hasSearchCache = await redis.get(searchKey);
+      if (!searchRes.ok) { results.errors++; continue; }
+      results.searchWarmed++;
 
-      if (!hasSearchCache && cptMatches.length) {
-        // Find matching procedures in our chargemaster DB
-        const cptCodes = cptMatches.map((m) => m.code);
-        const procedures = await prisma.procedure.findMany({
-          where: {
-            OR: [
-              { cptCode: { in: cptCodes } },
-              ...query.split(/\s+/).filter((w) => w.length > 3)
-                .map((w) => ({ name: { contains: w, mode: "insensitive" as const } })),
-            ],
-          },
-          select: {
-            id: true, cptCode: true, name: true, category: true,
-            _count: { select: { prices: true } },
-          },
-          take: 20,
-        });
+      const searchData = await searchRes.json() as {
+        procedures: { cptCode: string }[];
+        noData: boolean;
+      };
 
-        if (procedures.length) {
-          const hospitalCounts = await prisma.priceEntry.groupBy({
-            by: ["procedureId"],
-            where: { procedureId: { in: procedures.map((p) => p.id) } },
-            _count: { hospitalId: true },
-          });
-          const hcMap = Object.fromEntries(
-            hospitalCounts.map((h) => [h.procedureId, h._count.hospitalId]),
-          );
-
-          const searchResults = procedures
-            .map((p) => ({
-              cptCode: p.cptCode, name: p.name, category: p.category,
-              priceCount: p._count.prices, hospitalCount: hcMap[p.id] ?? 0, matchScore: 1,
-            }))
-            .filter((r) => r.priceCount > 0)
-            .sort((a, b) => b.priceCount - a.priceCount);
-
-          if (searchResults.length) {
-            await redis.set(searchKey, { procedures: searchResults, noData: false }, { ex: 3600 });
-          }
-        }
-      }
-
-      // 3. Warm hospitals/compare cache for the top CPT code × each payer type
-      const topCpt = cptMatches[0]?.code;
+      // 2. Warm compare cache for the top CPT code × insurers
+      const topCpt = searchData.procedures?.[0]?.cptCode;
       if (topCpt) {
-        for (const payerType of PAYER_TYPES) {
-          const compareKey = `compare7:${topCpt}|${payerType}||0.2`;
-          const hasCached = await redis.get(compareKey);
-          if (hasCached) {
-            results.skipped++;
-            continue;
-          }
-
-          // Trigger the compare logic by calling our own endpoint
-          const baseUrl = req.nextUrl.origin;
-          const params = new URLSearchParams({
-            cptCode: topCpt, payerType, coinsurance: "0.2",
+        // Warm one insurer at a time to avoid overwhelming Neon
+        const insurer = INSURERS[results.compareWarmed % INSURERS.length];
+        const params = new URLSearchParams({
+          cptCode: topCpt, payerType: "commercial",
+          payerName: insurer, coinsurance: "0.2",
+        });
+        try {
+          await fetch(`${baseUrl}/api/hospitals/compare?${params}`, {
+            signal: AbortSignal.timeout(30000),
           });
-          try {
-            await fetch(`${baseUrl}/api/hospitals/compare?${params}`, {
-              signal: AbortSignal.timeout(30000),
-            });
-            results.warmed++;
-          } catch {
-            results.errors++;
-          }
+          results.compareWarmed++;
+        } catch {
+          results.errors++;
         }
       }
     } catch {

@@ -5,6 +5,7 @@ import { redis } from "@/lib/redis";
 import { searchCptCodes } from "@/lib/cpt-lookup";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
