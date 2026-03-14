@@ -1,11 +1,13 @@
 /**
  * CPT/HCPCS code lookup — condition mappings + CptCode table, cached in Redis.
  *
- * Data sourced from CMS Medicare Physician Fee Schedule (9,297 codes).
- * Stored in the CptCode table, queried via Prisma.
+ * PERFORMANCE: Uses single raw SQL queries with OR matching + scoring instead of
+ * multiple sequential Prisma queries. This reduces Neon round-trips from 6-8 to 2
+ * (one for condition mappings, one for CptCode table, in parallel).
  */
 
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@/generated/prisma";
 import { redis } from "@/lib/redis";
 
 export interface CptMatch {
@@ -42,12 +44,9 @@ function extractKeywords(query: string): string[] {
 }
 
 /**
- * Searches CPT/HCPCS codes by natural language description or code prefix.
- * Strategy:
- *   1. Condition mappings (AND, then top-2 keywords)
- *   2. CptCode table (AND, then top-2, then OR with scoring)
- * Condition + CptCode searches run IN PARALLEL for speed.
- * Results cached in Redis for 24h.
+ * Searches CPT/HCPCS codes by natural language or code prefix.
+ * Uses TWO parallel SQL queries (condition mappings + CptCode table),
+ * each with OR matching + keyword scoring — 2 DB round-trips total.
  */
 export async function searchCptCodes(
   query: string,
@@ -56,17 +55,15 @@ export async function searchCptCodes(
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return [];
 
-  // Bump cache key when search logic changes to clear stale empty results
-  const cacheKey = `cpt4:${trimmed}:${limit}`;
+  const cacheKey = `cpt5:${trimmed}:${limit}`;
 
   try {
     const cached = await redis.get<CptMatch[]>(cacheKey);
     if (cached) return cached;
-  } catch { /* ignore Redis errors */ }
+  } catch { /* ignore */ }
 
   try {
     const isCodeQuery = /^\d{4,5}[A-Z]?$/i.test(trimmed);
-    const keywords = extractKeywords(trimmed);
 
     if (isCodeQuery) {
       const rows = await prisma.cptCode.findMany({
@@ -78,15 +75,62 @@ export async function searchCptCodes(
       return rows;
     }
 
+    const keywords = extractKeywords(trimmed);
     if (keywords.length === 0) return [];
 
-    // ── Run condition mapping + CptCode search in PARALLEL ──────────────
-    const [conditionResults, cptResults] = await Promise.all([
-      searchConditionMappings(keywords, limit),
-      searchCptTable(keywords, limit),
+    // Build LIKE patterns for each keyword
+    const patterns = keywords.map((w) => `%${w}%`);
+
+    // ── Single SQL query per table, run in PARALLEL ──────────────────────
+    const [conditionRows, cptRows] = await Promise.all([
+      // Condition mappings: OR match with scoring
+      prisma.$queryRaw<{ cptCode: string; procedureName: string; score: number; weight: number }[]>`
+        SELECT "cptCode", "procedureName", weight,
+          (${Prisma.join(
+            patterns.map((p) => Prisma.sql`CASE WHEN LOWER(condition) LIKE ${p} THEN 1 ELSE 0 END`),
+            Prisma.sql` + `,
+          )}) AS score
+        FROM "ConditionMapping"
+        WHERE ${Prisma.join(
+          patterns.map((p) => Prisma.sql`LOWER(condition) LIKE ${p}`),
+          Prisma.sql` OR `,
+        )}
+        ORDER BY score DESC, weight DESC
+        LIMIT ${limit * 2}
+      `,
+      // CptCode table: OR match with scoring
+      prisma.$queryRaw<{ code: string; description: string; score: number }[]>`
+        SELECT code, description,
+          (${Prisma.join(
+            patterns.map((p) => Prisma.sql`CASE WHEN LOWER(description) LIKE ${p} THEN 1 ELSE 0 END`),
+            Prisma.sql` + `,
+          )}) AS score
+        FROM "CptCode"
+        WHERE ${Prisma.join(
+          patterns.map((p) => Prisma.sql`LOWER(description) LIKE ${p}`),
+          Prisma.sql` OR `,
+        )}
+        ORDER BY score DESC
+        LIMIT ${limit * 2}
+      `,
     ]);
 
-    // Prefer condition mappings (curated), fall back to CptCode table
+    // Dedupe condition matches by CPT code, prefer highest score
+    const conditionResults: CptMatch[] = [];
+    const seenCodes = new Set<string>();
+    for (const r of conditionRows) {
+      if (seenCodes.has(r.cptCode)) continue;
+      seenCodes.add(r.cptCode);
+      conditionResults.push({ code: r.cptCode, description: r.procedureName });
+      if (conditionResults.length >= limit) break;
+    }
+
+    // CptCode results (already ordered by score DESC)
+    const cptResults: CptMatch[] = cptRows
+      .slice(0, limit)
+      .map((r) => ({ code: r.code, description: r.description }));
+
+    // Prefer condition mappings (curated symptom→procedure), fall back to CptCode
     const results = conditionResults.length ? conditionResults : cptResults;
 
     try { await redis.set(cacheKey, results, { ex: 86400 }); } catch { /* ignore */ }
@@ -94,103 +138,4 @@ export async function searchCptCodes(
   } catch {
     return [];
   }
-}
-
-/** Search condition mappings (symptoms → CPT). */
-async function searchConditionMappings(keywords: string[], limit: number): Promise<CptMatch[]> {
-  // Try AND on all keywords
-  let matches = await prisma.conditionMapping.findMany({
-    where: {
-      AND: keywords.map((w) => ({
-        condition: { contains: w, mode: "insensitive" as const },
-      })),
-    },
-    orderBy: { weight: "desc" },
-    take: limit,
-  });
-
-  // Fallback: top 2 longest keywords (most specific)
-  if (!matches.length && keywords.length > 1) {
-    const top2 = [...keywords].sort((a, b) => b.length - a.length).slice(0, 2);
-    matches = await prisma.conditionMapping.findMany({
-      where: {
-        AND: top2.map((w) => ({
-          condition: { contains: w, mode: "insensitive" as const },
-        })),
-      },
-      orderBy: { weight: "desc" },
-      take: limit,
-    });
-  }
-
-  // Fallback: single longest keyword
-  if (!matches.length) {
-    const longest = [...keywords].sort((a, b) => b.length - a.length)[0];
-    matches = await prisma.conditionMapping.findMany({
-      where: { condition: { contains: longest, mode: "insensitive" } },
-      orderBy: { weight: "desc" },
-      take: limit,
-    });
-  }
-
-  // Dedupe by CPT code
-  const seen = new Set<string>();
-  return matches
-    .map((m) => ({ code: m.cptCode, description: m.procedureName }))
-    .filter((r) => { if (seen.has(r.code)) return false; seen.add(r.code); return true; });
-}
-
-/** Search CptCode table (CMS fee schedule descriptions). */
-async function searchCptTable(keywords: string[], limit: number): Promise<CptMatch[]> {
-  // Try AND on all keywords
-  let rows = await prisma.cptCode.findMany({
-    where: {
-      AND: keywords.map((w) => ({
-        description: { contains: w, mode: "insensitive" as const },
-      })),
-    },
-    select: { code: true, description: true },
-    take: limit,
-  });
-  if (rows.length) return rows;
-
-  // Fallback: top 2 longest keywords AND
-  if (keywords.length > 1) {
-    const top2 = [...keywords].sort((a, b) => b.length - a.length).slice(0, 2);
-    rows = await prisma.cptCode.findMany({
-      where: {
-        AND: top2.map((w) => ({
-          description: { contains: w, mode: "insensitive" as const },
-        })),
-      },
-      select: { code: true, description: true },
-      take: limit,
-    });
-    if (rows.length) return rows;
-  }
-
-  // Fallback: OR matching with scoring — finds results even when CMS descriptions
-  // don't match layman terms (e.g., "arthroplasty" vs "replacement")
-  rows = await prisma.cptCode.findMany({
-    where: {
-      OR: keywords.map((w) => ({
-        description: { contains: w, mode: "insensitive" as const },
-      })),
-    },
-    select: { code: true, description: true },
-    take: limit * 4,
-  });
-
-  if (!rows.length) return [];
-
-  // Score by keyword coverage and prioritize results matching more keywords
-  return rows
-    .map((r) => {
-      const desc = r.description.toLowerCase();
-      const score = keywords.filter((w) => desc.includes(w)).length;
-      return { ...r, score };
-    })
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map(({ code, description }) => ({ code, description }));
 }
