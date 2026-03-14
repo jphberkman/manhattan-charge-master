@@ -78,7 +78,7 @@ interface CompareResult {
   medicare: { physicianFee: number; episodeRate?: number } | null;
 }
 
-const FETCH_TIMEOUT = 30_000; // 30s max per request
+const FETCH_TIMEOUT = 60_000; // 60s max per request
 
 async function testSearch(query: string): Promise<{ data: SearchResult; ms: number }> {
   const { result, ms } = await timed(async () => {
