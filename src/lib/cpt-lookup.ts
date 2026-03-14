@@ -55,7 +55,7 @@ export async function searchCptCodes(
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return [];
 
-  const cacheKey = `cpt6:${trimmed}:${limit}`;
+  const cacheKey = `cpt7:${trimmed}:${limit}`;
 
   try {
     const cached = await redis.get<CptMatch[]>(cacheKey);

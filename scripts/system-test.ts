@@ -9,6 +9,13 @@ import { PrismaClient } from "../src/generated/prisma";
 const LIVE = process.argv.includes("--live");
 const BASE = LIVE ? "https://shopforcare.xyz" : "http://localhost:3000";
 
+// Site password cookie for gated API routes (Vercel uses "Health")
+const SITE_PASSWORD = process.env.SITE_PASSWORD ?? "Health";
+const AUTH_HEADERS: Record<string, string> = {
+  "content-type": "application/json",
+  cookie: `site-access=${SITE_PASSWORD}`,
+};
+
 const prisma = new PrismaClient();
 
 // ── Test procedures ─────────────────────────────────────────────────────────
@@ -71,12 +78,15 @@ interface CompareResult {
   medicare: { physicianFee: number; episodeRate?: number } | null;
 }
 
+const FETCH_TIMEOUT = 30_000; // 30s max per request
+
 async function testSearch(query: string): Promise<{ data: SearchResult; ms: number }> {
   const { result, ms } = await timed(async () => {
     const res = await fetch(`${BASE}/api/procedure-search`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: AUTH_HEADERS,
       body: JSON.stringify({ query }),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
     });
     return res.json() as Promise<SearchResult>;
   });
@@ -91,7 +101,10 @@ async function testCompare(cptCode: string, insurer: string, payerType: string):
       payerName: insurer,
       coinsurance: "0.20",
     });
-    const res = await fetch(`${BASE}/api/hospitals/compare?${params}`);
+    const res = await fetch(`${BASE}/api/hospitals/compare?${params}`, {
+      headers: { cookie: `site-access=${SITE_PASSWORD}` },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT),
+    });
     return res.json() as Promise<CompareResult>;
   });
   return { data: result, ms };
