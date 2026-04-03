@@ -112,7 +112,7 @@ export async function GET(req: NextRequest) {
 
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
-  const cacheKey = `compare14:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
+  const cacheKey = `compare15:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached, {
     headers: { "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800" },
@@ -331,11 +331,17 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 6. Sort by patient cost (prefer real, then partial), assign ranks
+  // 6. Sort: when insurance selected, sort by patient cost; otherwise by cash price
+  const hasInsurance = payerType && payerType !== "cash";
   entries.sort((a, b) => {
-    const av = a.patientCost ?? a.cashPrice ?? Infinity;
-    const bv = b.patientCost ?? b.cashPrice ?? Infinity;
+    const av = hasInsurance
+      ? (a.patientCost ?? Infinity)
+      : (a.cashPrice ?? Infinity);
+    const bv = hasInsurance
+      ? (b.patientCost ?? Infinity)
+      : (b.cashPrice ?? Infinity);
     if (av !== bv) return av - bv;
+    // Secondary: prefer entries with more data
     return a.dataQuality === "real" ? -1 : 1;
   });
   entries.forEach((e, i) => { e.rank = i + 1; });

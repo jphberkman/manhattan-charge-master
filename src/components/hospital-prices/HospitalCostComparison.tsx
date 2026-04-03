@@ -79,8 +79,8 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
     return sortDir === "asc" ? d : -d;
   });
 
-  const withIns  = entries.filter((e) => e.patientCost != null).sort((a, b) => (a.patientCost ?? 0) - (b.patientCost ?? 0));
-  const withCash = entries.filter((e) => e.cashPrice != null).sort((a, b) => (a.cashPrice ?? 0) - (b.cashPrice ?? 0));
+  const withIns  = entries.filter((e) => e.patientCost != null && e.patientCost > 0).sort((a, b) => (a.patientCost ?? 0) - (b.patientCost ?? 0));
+  const withCash = entries.filter((e) => e.cashPrice != null && e.cashPrice > 0).sort((a, b) => (a.cashPrice ?? 0) - (b.cashPrice ?? 0));
 
   const cheapestIns   = withIns[0] ?? null;
   const costliestIns  = withIns.at(-1) ?? null;

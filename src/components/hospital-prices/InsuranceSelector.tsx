@@ -23,10 +23,12 @@ interface Insurer {
   name: string;
   shortName: string;
   payerType: InsuranceSelection["payerType"];
-  /** Brand color for the logo circle (hex), or "medicare" | "medicaid" | "cash" for icon-based */
+  /** Brand color (hex) for text fallback */
   brandColor: string;
-  /** "brand" = colored circle with brand initial, "icon" = Lucide icon */
-  logoType: "brand" | "icon";
+  /** Logo image URL for commercial insurers, or "medicare"/"medicaid"/"cash" for icons */
+  logoUrl: string;
+  /** "image" = <img> logo, "icon" = Lucide icon */
+  logoType: "image" | "icon";
   tagline: string;
   plans: Plan[];
 }
@@ -37,7 +39,8 @@ const INSURERS: Insurer[] = [
     shortName: "Aetna",
     payerType: "commercial",
     brandColor: "#7D3F98",
-    logoType: "brand",
+    logoUrl: "https://logo.clearbit.com/aetna.com",
+    logoType: "image",
     tagline: "Large national network",
     plans: [
       { name: "PPO",  description: "See any doctor, no referral needed. Most flexible.", typicalDeductible: "$1,500 – $3,500/yr", network: "Very large — almost all NYC hospitals", yourShare: "Usually 20% after deductible" },
@@ -51,7 +54,8 @@ const INSURERS: Insurer[] = [
     shortName: "Cigna",
     payerType: "commercial",
     brandColor: "#E47825",
-    logoType: "brand",
+    logoUrl: "https://logo.clearbit.com/cigna.com",
+    logoType: "image",
     tagline: "Strong in employer plans",
     plans: [
       { name: "PPO",  description: "See any doctor, no referral needed.", typicalDeductible: "$1,500 – $4,000/yr", network: "Very large — most NYC hospitals in-network", yourShare: "Usually 20% after deductible" },
@@ -65,7 +69,8 @@ const INSURERS: Insurer[] = [
     shortName: "United",
     payerType: "commercial",
     brandColor: "#002677",
-    logoType: "brand",
+    logoUrl: "https://logo.clearbit.com/uhc.com",
+    logoType: "image",
     tagline: "Largest US insurer",
     plans: [
       { name: "PPO",           description: "Maximum flexibility — no referrals, any doctor.", typicalDeductible: "$1,500 – $4,500/yr", network: "Enormous — all major NYC hospitals", yourShare: "Usually 20% after deductible" },
@@ -79,7 +84,8 @@ const INSURERS: Insurer[] = [
     shortName: "Empire BCBS",
     payerType: "commercial",
     brandColor: "#0075C9",
-    logoType: "brand",
+    logoUrl: "https://logo.clearbit.com/empireblue.com",
+    logoType: "image",
     tagline: "New York's BCBS plan",
     plans: [
       { name: "PPO",          description: "Full flexibility, no referrals needed.", typicalDeductible: "$1,500 – $4,000/yr", network: "Very large NY & national network", yourShare: "Usually 20% after deductible" },
@@ -93,7 +99,8 @@ const INSURERS: Insurer[] = [
     shortName: "Oxford",
     payerType: "commercial",
     brandColor: "#5C2D91",
-    logoType: "brand",
+    logoUrl: "https://logo.clearbit.com/uhc.com",
+    logoType: "image",
     tagline: "Strong NYC hospital access",
     plans: [
       { name: "PPO",          description: "See any doctor anywhere, no referrals.", typicalDeductible: "$1,500 – $4,000/yr", network: "Large NYC-focused network", yourShare: "Usually 20% after deductible" },
@@ -106,7 +113,8 @@ const INSURERS: Insurer[] = [
     shortName: "Emblem",
     payerType: "commercial",
     brandColor: "#00A651",
-    logoType: "brand",
+    logoUrl: "https://logo.clearbit.com/emblemhealth.com",
+    logoType: "image",
     tagline: "NYC-based, strong local network",
     plans: [
       { name: "PPO",         description: "Flexible, no referrals required.", typicalDeductible: "$1,500 – $3,500/yr", network: "Strong NYC hospital network", yourShare: "Usually 20% after deductible" },
@@ -119,7 +127,8 @@ const INSURERS: Insurer[] = [
     shortName: "Oscar",
     payerType: "commercial",
     brandColor: "#FF4F00",
-    logoType: "brand",
+    logoUrl: "https://logo.clearbit.com/hioscar.com",
+    logoType: "image",
     tagline: "Modern, app-based, NYC-friendly",
     plans: [
       { name: "PPO", description: "Full flexibility, concierge-style support app.", typicalDeductible: "$1,500 – $4,000/yr", network: "Good NYC coverage", yourShare: "Usually 20% after deductible" },
@@ -132,7 +141,8 @@ const INSURERS: Insurer[] = [
     shortName: "Humana",
     payerType: "commercial",
     brandColor: "#4DB848",
-    logoType: "brand",
+    logoUrl: "https://logo.clearbit.com/humana.com",
+    logoType: "image",
     tagline: "Strong Medicare Advantage options",
     plans: [
       { name: "PPO",        description: "Flexible, no referrals needed.", typicalDeductible: "$1,500 – $4,000/yr", network: "Large national network", yourShare: "Usually 20% after deductible" },
@@ -145,6 +155,7 @@ const INSURERS: Insurer[] = [
     shortName: "Medicare",
     payerType: "medicare",
     brandColor: "medicare",
+    logoUrl: "medicare",
     logoType: "icon",
     tagline: "Federal insurance for 65+",
     plans: [
@@ -157,6 +168,7 @@ const INSURERS: Insurer[] = [
     shortName: "Medicaid",
     payerType: "medicaid",
     brandColor: "medicaid",
+    logoUrl: "medicaid",
     logoType: "icon",
     tagline: "Free/low-cost for qualifying New Yorkers",
     plans: [
@@ -168,6 +180,7 @@ const INSURERS: Insurer[] = [
     shortName: "No insurance",
     payerType: "cash",
     brandColor: "cash",
+    logoUrl: "cash",
     logoType: "icon",
     tagline: "No insurance — pay directly",
     plans: [
@@ -176,36 +189,50 @@ const INSURERS: Insurer[] = [
   },
 ];
 
-/** Renders a branded logo mark: colored brand name for commercial, Lucide icon for gov/cash. */
+/** Renders actual company logo image for commercial, Lucide icon for gov/cash. */
 function InsurerLogo({ insurer, size = "md" }: { insurer: Insurer; size?: "sm" | "md" }) {
+  const [imgError, setImgError] = useState(false);
   const iconPx = size === "sm" ? "size-4" : "size-5";
+  const boxSize = size === "sm" ? "size-7" : "size-9";
 
   if (insurer.logoType === "icon") {
     const Icon =
-      insurer.brandColor === "medicare" ? Landmark :
-      insurer.brandColor === "medicaid" ? Hospital :
+      insurer.logoUrl === "medicare" ? Landmark :
+      insurer.logoUrl === "medicaid" ? Hospital :
       Banknote;
     const bg =
-      insurer.brandColor === "medicare" ? "bg-blue-50 text-blue-600" :
-      insurer.brandColor === "medicaid" ? "bg-emerald-50 text-emerald-600" :
+      insurer.logoUrl === "medicare" ? "bg-blue-50 text-blue-600" :
+      insurer.logoUrl === "medicaid" ? "bg-emerald-50 text-emerald-600" :
       "bg-amber-50 text-amber-600";
     return (
-      <span className={cn("inline-flex items-center justify-center rounded-lg", size === "sm" ? "size-7" : "h-9 w-12", bg)}>
+      <span className={cn("inline-flex items-center justify-center rounded-xl", boxSize, bg)}>
         <Icon className={iconPx} strokeWidth={1.8} />
       </span>
     );
   }
 
-  // Branded text logo — company name in their official brand color
+  // Image logo with branded text fallback
+  if (imgError) {
+    return (
+      <span
+        className={cn("inline-flex items-center justify-center rounded-xl bg-neutral-50 border border-neutral-100 font-extrabold tracking-tight leading-none", boxSize, size === "sm" ? "text-[8px]" : "text-[10px]")}
+        style={{ color: insurer.brandColor }}
+      >
+        {insurer.shortName.charAt(0)}
+      </span>
+    );
+  }
+
   return (
-    <span
-      className={cn(
-        "inline-flex items-center justify-center rounded-lg bg-neutral-50 border border-neutral-100 font-extrabold tracking-tight leading-none",
-        size === "sm" ? "h-7 px-1.5 text-[9px]" : "h-9 px-2 text-[11px]"
-      )}
-      style={{ color: insurer.brandColor }}
-    >
-      {insurer.shortName}
+    <span className={cn("inline-flex items-center justify-center rounded-xl bg-white border border-neutral-100 overflow-hidden p-1", boxSize)}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={insurer.logoUrl}
+        alt={insurer.shortName}
+        className="size-full object-contain"
+        loading="lazy"
+        onError={() => setImgError(true)}
+      />
     </span>
   );
 }
