@@ -588,8 +588,15 @@ async function main() {
       const filename = `${file.hospitalName.replace(/[^a-zA-Z0-9]/g, "_")}.${ext}`;
       const filePath = await downloadFile(file.url, filename);
 
+      // Auto-detect format from file content (ZIP may contain different format than declared)
+      const firstBytes = readFileSync(filePath, { encoding: "utf-8", flag: "r" }).slice(0, 100).trimStart();
+      const actualFormat = firstBytes.startsWith("{") || firstBytes.startsWith("[") ? "cms-json" : "cms-csv";
+      if (actualFormat !== file.format) {
+        console.log(`  Note: file is ${actualFormat} (declared as ${file.format})`);
+      }
+
       let result: { rows: number; cptCodes: number };
-      if (file.format === "cms-json") {
+      if (actualFormat === "cms-json") {
         result = await processCmsJson(filePath, file.hospitalName, file.address, file.cptOnly ?? false);
       } else {
         result = await processCmsCsv(filePath, file.hospitalName, file.address, file.skipLines ?? 0);
