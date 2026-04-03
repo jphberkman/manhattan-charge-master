@@ -39,7 +39,7 @@ const INSURERS: Insurer[] = [
     shortName: "Aetna",
     payerType: "commercial",
     brandColor: "#7D3F98",
-    logoUrl: "https://logo.clearbit.com/aetna.com",
+    logoUrl: "/logos/aetna.svg",
     logoType: "image",
     tagline: "Large national network",
     plans: [
@@ -54,7 +54,7 @@ const INSURERS: Insurer[] = [
     shortName: "Cigna",
     payerType: "commercial",
     brandColor: "#E47825",
-    logoUrl: "https://logo.clearbit.com/cigna.com",
+    logoUrl: "/logos/cigna.svg",
     logoType: "image",
     tagline: "Strong in employer plans",
     plans: [
@@ -69,7 +69,7 @@ const INSURERS: Insurer[] = [
     shortName: "United",
     payerType: "commercial",
     brandColor: "#002677",
-    logoUrl: "https://logo.clearbit.com/uhc.com",
+    logoUrl: "/logos/unitedhealthcare.svg",
     logoType: "image",
     tagline: "Largest US insurer",
     plans: [
@@ -84,7 +84,7 @@ const INSURERS: Insurer[] = [
     shortName: "Empire BCBS",
     payerType: "commercial",
     brandColor: "#0075C9",
-    logoUrl: "https://logo.clearbit.com/empireblue.com",
+    logoUrl: "/logos/empire-bcbs.svg",
     logoType: "image",
     tagline: "New York's BCBS plan",
     plans: [
@@ -99,7 +99,7 @@ const INSURERS: Insurer[] = [
     shortName: "Oxford",
     payerType: "commercial",
     brandColor: "#5C2D91",
-    logoUrl: "https://logo.clearbit.com/uhc.com",
+    logoUrl: "/logos/oxford.png",
     logoType: "image",
     tagline: "Strong NYC hospital access",
     plans: [
@@ -113,7 +113,7 @@ const INSURERS: Insurer[] = [
     shortName: "Emblem",
     payerType: "commercial",
     brandColor: "#00A651",
-    logoUrl: "https://logo.clearbit.com/emblemhealth.com",
+    logoUrl: "/logos/emblemhealth.png",
     logoType: "image",
     tagline: "NYC-based, strong local network",
     plans: [
@@ -127,7 +127,7 @@ const INSURERS: Insurer[] = [
     shortName: "Oscar",
     payerType: "commercial",
     brandColor: "#FF4F00",
-    logoUrl: "https://logo.clearbit.com/hioscar.com",
+    logoUrl: "/logos/oscar.svg",
     logoType: "image",
     tagline: "Modern, app-based, NYC-friendly",
     plans: [
@@ -141,7 +141,7 @@ const INSURERS: Insurer[] = [
     shortName: "Humana",
     payerType: "commercial",
     brandColor: "#4DB848",
-    logoUrl: "https://logo.clearbit.com/humana.com",
+    logoUrl: "/logos/humana.svg",
     logoType: "image",
     tagline: "Strong Medicare Advantage options",
     plans: [
