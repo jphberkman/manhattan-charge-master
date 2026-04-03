@@ -34,14 +34,16 @@ model Project {
 }
 
 model Hospital {
-  id         String    @id @default(cuid())
-  name       String
-  address    String
-  borough    String    @default("Manhattan")
-  sourceFile String
-  lastSeeded DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
+  id            String    @id @default(cuid())
+  name          String
+  address       String
+  borough       String    @default("Manhattan")
+  sourceFile    String
+  lastSeeded    DateTime?
+  cmsProviderId String?   // CMS CCN (6-digit), e.g. "330214" for NYU
+  npi           String?   // National Provider Identifier
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   prices     PriceEntry[]
 
@@ -70,6 +72,7 @@ model PriceEntry {
   priceInCents Int
   priceType    String
   rawCode      String   @default("")
+  source       String   @default("mrf")  // "mrf" | "cms" | "upload" | "dolthub"
   createdAt    DateTime @default(now())
 
   hospital     Hospital  @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
@@ -94,7 +97,13 @@ model CptCode {
   /** Average submitted charge (national avg, in USD). Chargemaster benchmark. */
   avgCharge     Float?
   /** Total Medicare services rendered nationally. Proxy for procedure frequency. */
-  totalServices Float?
+  totalServices   Float?
+  /** Manhattan locality facility allowed amount (USD). */
+  facilityRate    Float?
+  /** Manhattan locality non-facility allowed amount (USD). */
+  nonFacilityRate Float?
+  /** Total RVU for reference. */
+  totalRvu        Float?
   createdAt   DateTime @default(now())
 
   @@index([description])
@@ -135,6 +144,27 @@ model SearchLog {
 
   @@index([createdAt])
   @@index([query])
+}
+
+/// CMS inpatient/outpatient charge data (from CMS Provider Utilization & Payment Data).
+/// Aggregates average charges, total payments, and Medicare payments per DRG per provider.
+model CmsChargeData {
+  id                  String   @id @default(cuid())
+  providerId          String   // CMS CCN
+  hospitalName        String
+  drgCode             String   // MS-DRG or APC code
+  drgDescription      String
+  totalDischarges     Int
+  avgCoveredCharges   Int      // cents
+  avgTotalPayments    Int      // cents
+  avgMedicarePayments Int      // cents
+  dataYear            Int
+  serviceType         String   // "inpatient" | "outpatient"
+  createdAt           DateTime @default(now())
+
+  @@unique([providerId, drgCode, dataYear, serviceType])
+  @@index([drgCode])
+  @@index([providerId])
 }
 
 /// NUBC Revenue Codes — maps 4-digit facility charge categories to CPT procedures.

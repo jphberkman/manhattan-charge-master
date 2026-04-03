@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma";
 import { redis } from "@/lib/redis";
-import { getBestMedicareBenchmark } from "@/lib/medicare";
+import { getBestMedicareBenchmark, getMedicareRateAsync } from "@/lib/medicare";
 import type { MedicareBenchmark } from "@/lib/medicare";
 
 export const maxDuration = 60;
@@ -125,7 +125,7 @@ export async function GET(req: NextRequest) {
   });
 
   if (!proc) {
-    const medicare = getBestMedicareBenchmark([cptCode]);
+    const medicare = await getMedicareRateAsync(cptCode) ?? getBestMedicareBenchmark([cptCode]);
     const response: CompareResponse = { entries: [], medicare };
     await redis.set(cacheKey, response, { ex: 86400 });
     return NextResponse.json(response);
@@ -275,7 +275,63 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // 5. Sort by patient cost (prefer real, then partial), assign ranks
+  const medicare = await getMedicareRateAsync(cptCode) ?? getBestMedicareBenchmark([cptCode]);
+
+  // 5. Fallback: fill in missing hospitals from CMS charge data if we have a DRG code
+  if (medicare?.drgCode) {
+    const existingHospitalIds = new Set(entries.map(e => e.hospital.id));
+
+    // Map CMS provider IDs to canonical hospital IDs
+    const CMS_TO_CANONICAL: Record<string, string> = {
+      "330214": "nyu-langone",
+      "330101": "nyp-cornell",
+      "330024": "mount-sinai",
+      "330154": "msk",
+      "330064": "bellevue",
+      "330119": "lenox-hill",
+      "330270": "hss",
+      "330234": "nyp-columbia",
+    };
+
+    const cmsData = await prisma.cmsChargeData.findMany({
+      where: {
+        drgCode: medicare.drgCode,
+        providerId: { in: Object.keys(CMS_TO_CANONICAL) },
+      },
+      orderBy: { dataYear: "desc" },
+    });
+
+    for (const cms of cmsData) {
+      const canonicalId = CMS_TO_CANONICAL[cms.providerId];
+      if (!canonicalId || existingHospitalIds.has(canonicalId)) continue;
+
+      const hospital = MANHATTAN_HOSPITALS.find(h => h.id === canonicalId);
+      if (!hospital) continue;
+
+      const chargemasterPrice = Math.round(cms.avgCoveredCharges / 100);
+      const medicarePayment = Math.round(cms.avgMedicarePayments / 100);
+      // Estimate commercial rate as ~2.5x Medicare payment
+      const estimatedInsRate = Math.round(medicarePayment * 2.5);
+      const cashPrice = chargemasterPrice; // chargemaster is roughly cash price
+
+      entries.push({
+        hospital: { id: hospital.id, name: hospital.name, address: hospital.address },
+        chargemasterPrice,
+        insuranceRate: estimatedInsRate,
+        patientCost: Math.round(estimatedInsRate * coinsurance),
+        insurerPays: Math.round(estimatedInsRate * (1 - coinsurance)),
+        cashPrice,
+        payerName: null,
+        dataQuality: "partial" as const,
+        isAiEstimate: false,
+        dataLastUpdated: null,
+        rank: 0,
+      });
+      existingHospitalIds.add(canonicalId);
+    }
+  }
+
+  // 6. Sort by patient cost (prefer real, then partial), assign ranks
   entries.sort((a, b) => {
     const av = a.patientCost ?? a.cashPrice ?? Infinity;
     const bv = b.patientCost ?? b.cashPrice ?? Infinity;
@@ -283,8 +339,6 @@ export async function GET(req: NextRequest) {
     return a.dataQuality === "real" ? -1 : 1;
   });
   entries.forEach((e, i) => { e.rank = i + 1; });
-
-  const medicare = getBestMedicareBenchmark([cptCode]);
   const response: CompareResponse = { entries, medicare };
 
   await redis.set(cacheKey, response, { ex: 86400 });

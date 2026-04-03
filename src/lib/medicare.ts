@@ -129,3 +129,88 @@ export function getBestMedicareBenchmark(cptCodes: string[]): MedicareBenchmark 
     return (b.episodeRate ?? b.physicianFee) - (a.episodeRate ?? a.physicianFee);
   })[0];
 }
+
+// ── Async lookup with DB + CMS API fallback ──────────────────────────────────
+
+/**
+ * Chains three lookup strategies for a Medicare benchmark:
+ *   1. Hardcoded MEDICARE_RATES map (instant)
+ *   2. CptCode table in the database (Prisma)
+ *   3. CMS MPFS SODA API (real-time, cached in Redis for 30 days)
+ *
+ * If found via API, writes back to CptCode table for future queries.
+ * The existing sync `getMedicareRate()` is unchanged for validation use.
+ */
+export async function getMedicareRateAsync(cptCode: string): Promise<MedicareBenchmark | null> {
+  const code = cptCode.trim();
+
+  // 1. Check hardcoded map (instant)
+  const staticEntry = MEDICARE_RATES[code];
+  if (staticEntry) return { cptCode: code, ...staticEntry };
+
+  // 2. Check CptCode table
+  try {
+    const { prisma } = await import("@/lib/prisma");
+    const dbRow = await prisma.cptCode.findUnique({ where: { code } });
+    if (dbRow && (dbRow.medicareRate || dbRow.facilityRate)) {
+      const fee = dbRow.facilityRate ?? dbRow.medicareRate ?? 0;
+      return {
+        cptCode: code,
+        physicianFee: fee,
+        episodeRate: null,
+        episodeType: "PFS-only",
+        commercialMultiplierLow: 2.0,
+        commercialMultiplierHigh: 4.0,
+        notes: dbRow.description,
+        source: "CptCode DB",
+      };
+    }
+  } catch {
+    // DB unavailable, continue to API fallback
+  }
+
+  // 3. CMS MPFS SODA API fallback
+  try {
+    const { lookupMpfsRate } = await import("@/lib/cms-mpfs-api");
+    const mpfs = await lookupMpfsRate(code);
+    if (!mpfs) return null;
+
+    const fee = mpfs.facilityRate || mpfs.nonFacilityRate;
+    if (fee <= 0) return null;
+
+    // Write back to CptCode for future queries (fire-and-forget)
+    try {
+      const { prisma } = await import("@/lib/prisma");
+      await prisma.cptCode.upsert({
+        where: { code },
+        create: {
+          code,
+          description: `HCPCS ${code} (auto-populated from CMS MPFS API)`,
+          facilityRate: mpfs.facilityRate || null,
+          nonFacilityRate: mpfs.nonFacilityRate || null,
+          medicareRate: fee,
+        },
+        update: {
+          facilityRate: mpfs.facilityRate || undefined,
+          nonFacilityRate: mpfs.nonFacilityRate || undefined,
+          medicareRate: fee,
+        },
+      });
+    } catch {
+      // Write-back failed, not critical
+    }
+
+    return {
+      cptCode: code,
+      physicianFee: fee,
+      episodeRate: null,
+      episodeType: "PFS-only",
+      commercialMultiplierLow: 2.0,
+      commercialMultiplierHigh: 4.0,
+      notes: `Auto-fetched from CMS MPFS API. Facility: $${mpfs.facilityRate}, Non-facility: $${mpfs.nonFacilityRate}`,
+      source: "CMS MPFS API",
+    };
+  } catch {
+    return null;
+  }
+}

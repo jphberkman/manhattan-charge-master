@@ -7,7 +7,7 @@
  *  - CMS JSON (Mount Sinai, MSK, HSS)
  *
  * Usage:
- *   npx tsx scripts/seed-hospital-files.ts [--hospital=nyu|msk|sinai|hss|all]
+ *   npx tsx scripts/seed-hospital-files.ts [--hospital=nyu|msk|sinai|hss|nyp|northwell|bellevue|all]
  *   npx tsx scripts/seed-hospital-files.ts                  # seeds all
  */
 
@@ -34,6 +34,15 @@ interface HospitalFile {
   cptOnly?: boolean;
 }
 
+// To find updated MRF URLs, check each hospital's price transparency page:
+//   NYU Langone:  https://www.nyulangone.org/price-transparency
+//   MSK:          https://www.mskcc.org/insurance-assistance/understanding-cost-care
+//   Mount Sinai:  https://www.mountsinai.org/about/compliance/billing/machine-readable-files
+//   HSS:          https://www.hss.edu/price-transparency.asp
+//   NYP:          https://www.nyp.org/about-us/hospital-standard-charges
+//   Northwell:    https://www.northwell.edu/price-transparency
+//   NYC H+H:      https://www.nychealthandhospitals.org/price-transparency/
+// Files follow CMS naming: {EIN}_{hospital-name}_standardcharges.{csv|json}
 const HOSPITAL_FILES: HospitalFile[] = [
   {
     key: "nyu",
@@ -80,6 +89,30 @@ const HOSPITAL_FILES: HospitalFile[] = [
     address: "535 E 70th St, New York, NY 10021",
     url: "https://d2cg6hcwj0g0z0.cloudfront.net/131624135-1598703019_ny-society-for-the-relief-of-ruptured-and-crippled-maintaing-the-hospital-for-special-surgery_standardcharges.json",
     format: "cms-json",
+  },
+  {
+    key: "nyp",
+    hospitalName: "NewYork-Presbyterian Hospital",
+    address: "525 E 68th St, New York, NY 10065",
+    url: "https://www.nyp.org/documents/standard-charges/332840241_newyork-presbyterian-hospital_standardcharges.csv",
+    format: "cms-csv",
+    skipLines: 2,
+  },
+  {
+    key: "northwell",
+    hospitalName: "Lenox Hill Hospital",
+    address: "100 E 77th St, New York, NY 10075",
+    url: "https://nwhcpricetransparency.b-cdn.net/131624064_Lenox-Hill-Hospital_standardcharges.csv",
+    format: "cms-csv",
+    skipLines: 2,
+  },
+  {
+    key: "bellevue",
+    hospitalName: "Bellevue Hospital Center",
+    address: "462 1st Ave, New York, NY 10016",
+    url: "https://www.nychealthandhospitals.org/price-transparency/bellevue/133893681_Bellevue-Hospital-Center_standardcharges.csv",
+    format: "cms-csv",
+    skipLines: 2,
   },
 ];
 
