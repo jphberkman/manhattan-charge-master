@@ -53,6 +53,8 @@ export interface ProcedureBreakdown {
   importantNotes: string[];
   /** Fraction of components backed by real chargemaster data (0–1). */
   dataCompleteness: number;
+  /** Confidence level based on data quality: "high" (>50% real), "medium" (some real), "low" (all estimated). */
+  confidence: "high" | "medium" | "low";
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -464,24 +466,79 @@ and follow-up visits.`;
         };
       });
 
+      // ── Validate AI-returned CPT codes against DB ─────────────────────────
+      const aiCptCodes = enrichedComponents
+        .map((c) => c.cptCode)
+        .filter((code) => code && code.length >= 4);
+      if (aiCptCodes.length > 0) {
+        const knownProcedures = await dbTimeout(
+          prisma.procedure.findMany({
+            where: { cptCode: { in: aiCptCodes } },
+            select: { cptCode: true },
+          }),
+          [],
+        );
+        const knownCpts = new Set(knownProcedures.map((p) => p.cptCode));
+        for (const comp of enrichedComponents) {
+          if (comp.cptCode && comp.cptCode.length >= 4 && !knownCpts.has(comp.cptCode)) {
+            // Mark unverified CPT codes in notes so the UI can show a warning
+            comp.notes = comp.notes
+              ? `${comp.notes} [CPT code not verified in database]`
+              : "[CPT code not verified in database]";
+          }
+        }
+      }
+
       const realCount = enrichedComponents.filter((c) => c.dataSource === "real").length;
       const dataCompleteness = enrichedComponents.length > 0 ? realCount / enrichedComponents.length : 0;
+
+      // ── Confidence level ───────────────────────────────────────────────────
+      const confidence: "high" | "medium" | "low" =
+        dataCompleteness > 0.5 ? "high" : dataCompleteness > 0 ? "medium" : "low";
+
+      // ── Compute totals ─────────────────────────────────────────────────────
+      const chargemasterTotalHigh = sumField(enrichedComponents, "chargemasterHigh");
+      const cashTotalHigh = sumField(enrichedComponents, "cashHigh");
+
+      // ── Total price sanity check: flag if total exceeds $1M ────────────────
+      const totalNotes = [...(rawBreakdown.importantNotes ?? [])];
+      if (chargemasterTotalHigh > 1_000_000 || cashTotalHigh > 1_000_000) {
+        totalNotes.push(
+          "Warning: Total estimated cost exceeds $1,000,000. This may indicate an unusual case or estimation error. Please verify with your provider."
+        );
+      }
 
       const enrichedBreakdown: ProcedureBreakdown = {
         ...rawBreakdown,
         components: enrichedComponents,
         chargemasterTotalLow: sumField(enrichedComponents, "chargemasterLow"),
-        chargemasterTotalHigh: sumField(enrichedComponents, "chargemasterHigh"),
+        chargemasterTotalHigh,
         insuranceTotalLow: sumField(enrichedComponents, "insuranceLow") || null,
         insuranceTotalHigh: sumField(enrichedComponents, "insuranceHigh") || null,
         cashTotalLow: sumField(enrichedComponents, "cashLow"),
-        cashTotalHigh: sumField(enrichedComponents, "cashHigh"),
+        cashTotalHigh,
         coinsurance,
         insurerName: insurerName ?? null,
         dataCompleteness,
+        confidence,
+        importantNotes: totalNotes,
       };
 
       await redis.set(cacheKey, enrichedBreakdown, { ex: 86400 });
+
+      // Fire-and-forget search log
+      prisma.searchLog.create({
+        data: {
+          query: query.trim(),
+          endpoint: "procedure-breakdown",
+          resultCount: enrichedComponents.length,
+          cptCode: enrichedBreakdown.cptCode ?? null,
+          procedureName: enrichedBreakdown.procedureName ?? null,
+          insurerName: insurerName ?? null,
+          payerType: payerType ?? null,
+        },
+      }).catch(() => {});
+
       send("result", enrichedBreakdown);
     } catch (err) {
       console.error("Breakdown error:", err);

@@ -42,6 +42,42 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Procedure not found" }, { status: 404 });
   }
 
+  // ── Check for real prices first — skip AI if we have enough real data ──────
+  const realPrices = await prisma.priceEntry.findMany({
+    where: {
+      procedureId,
+      ...(payerType !== "all" ? { payerType } : {}),
+    },
+    select: {
+      id: true,
+      payerName: true,
+      payerType: true,
+      priceInCents: true,
+      priceType: true,
+      hospital: { select: { id: true, name: true, address: true } },
+    },
+    take: 50,
+  });
+
+  if (realPrices.length >= 3) {
+    const realEntries: (PriceApiEntry & { source: "database" })[] = realPrices
+      .map((r) => ({
+        id: r.id,
+        hospital: { id: r.hospital.id, name: r.hospital.name, address: r.hospital.address },
+        payerName: r.payerName,
+        payerType: r.payerType as PriceApiEntry["payerType"],
+        priceUsd: r.priceInCents / 100,
+        priceType: r.priceType as PriceApiEntry["priceType"],
+        source: "database" as const,
+      }))
+      .sort((a, b) => a.priceUsd - b.priceUsd);
+
+    estimateCache.set(cacheKey, { data: realEntries, ts: Date.now() });
+    return NextResponse.json(realEntries, {
+      headers: { "Cache-Control": "s-maxage=3600, stale-while-revalidate=86400" },
+    });
+  }
+
   const payerLabel =
     payerType === "all" ? "negotiated (commercial insurance)" : payerType;
 
@@ -80,8 +116,22 @@ Rules:
     const match = text.match(/\[[\s\S]*\]/);
     if (!match) throw new Error("Could not parse AI response");
 
-    const estimates: { hospitalIndex: number; priceUsd: number; priceType: string }[] =
+    const rawEstimates: { hospitalIndex: number; priceUsd: number; priceType: string }[] =
       JSON.parse(match[0]);
+
+    // ── Validate AI output ────────────────────────────────────────────────────
+    const estimates = rawEstimates.filter((e) => {
+      // Reject prices outside sane range ($50 – $500,000)
+      if (e.priceUsd < 50 || e.priceUsd > 500_000) return false;
+      return true;
+    });
+
+    // Validate low < high per hospital pair (if multiple price types exist)
+    const byHospital = new Map<number, number[]>();
+    for (const e of estimates) {
+      if (!byHospital.has(e.hospitalIndex)) byHospital.set(e.hospitalIndex, []);
+      byHospital.get(e.hospitalIndex)!.push(e.priceUsd);
+    }
 
     const entries: (PriceApiEntry & { source: "ai-estimate" })[] = estimates
       .filter((e) => e.hospitalIndex >= 0 && e.hospitalIndex < MANHATTAN_HOSPITALS.length)

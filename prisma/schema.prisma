@@ -121,6 +121,22 @@ model ConditionMapping {
   @@index([cptCode])
 }
 
+model SearchLog {
+  id            String   @id @default(cuid())
+  query         String
+  endpoint      String
+  resultCount   Int      @default(0)
+  cptCode       String?
+  procedureName String?
+  insurerName   String?
+  payerType     String?
+  responseTimeMs Int?
+  createdAt     DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([query])
+}
+
 /// NUBC Revenue Codes — maps 4-digit facility charge categories to CPT procedures.
 /// Hospitals often list facility fees by revenue code (e.g. 0360 = Operating Room)
 /// rather than CPT code. This table links them for price aggregation.

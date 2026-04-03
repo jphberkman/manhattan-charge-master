@@ -103,6 +103,7 @@ function resolveCanonicalId(rawName: string): string | null {
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const startTime = Date.now();
   const { searchParams } = new URL(req.url);
   const cptCode    = searchParams.get("cptCode");
   const payerType  = searchParams.get("payerType");
@@ -285,6 +286,20 @@ export async function GET(req: NextRequest) {
   const response: CompareResponse = { entries, medicare };
 
   await redis.set(cacheKey, response, { ex: 86400 });
+
+  // Fire-and-forget search log
+  prisma.searchLog.create({
+    data: {
+      query: cptCode,
+      endpoint: "hospitals/compare",
+      resultCount: entries.length,
+      cptCode,
+      insurerName: payerName ?? null,
+      payerType: payerType ?? null,
+      responseTimeMs: Date.now() - startTime,
+    },
+  }).catch(() => {});
+
   return NextResponse.json(response, {
     headers: { "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800" },
   });

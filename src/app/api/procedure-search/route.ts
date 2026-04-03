@@ -31,6 +31,7 @@ function looksLikeCptCode(query: string): boolean {
 // ── Route handler ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const startTime = Date.now();
   const { query } = await req.json() as { query: string };
   if (!query?.trim()) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
@@ -102,5 +103,18 @@ export async function POST(req: NextRequest) {
 
   const response: ProcedureSearchResponse = { procedures: results, noData: false };
   await redis.set(cacheKey, response, { ex: 3600 });
+
+  // Fire-and-forget search log
+  prisma.searchLog.create({
+    data: {
+      query: query.trim(),
+      endpoint: "procedure-search",
+      resultCount: results.length,
+      cptCode: results[0]?.cptCode ?? null,
+      procedureName: results[0]?.name ?? null,
+      responseTimeMs: Date.now() - startTime,
+    },
+  }).catch(() => {});
+
   return NextResponse.json(response);
 }

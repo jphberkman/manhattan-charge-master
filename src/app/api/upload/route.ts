@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import { prisma } from "@/lib/prisma";
 import { anthropicCall } from "@/lib/anthropic-fetch";
+import { getMedicareRate } from "@/lib/medicare";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -73,6 +74,62 @@ function normalizePriceType(raw: string): string {
 function parsePrice(raw: string): number {
   const val = parseFloat(raw.replace(/[$,\s]/g, ""));
   return isNaN(val) ? 0 : Math.round(val * 100);
+}
+
+// ---------------------------------------------------------------------------
+// Validation helpers
+// ---------------------------------------------------------------------------
+const CPT_PATTERN = /^\d{4,5}[A-Z]?$/;
+const HCPCS_PATTERN = /^[A-Z]\d{4}$/;
+
+interface UploadValidation {
+  skippedLowPrice: number;    // price < $1 (likely data error)
+  flaggedHighPrice: number;   // price > $500,000 (outlier)
+  skippedBadCpt: number;      // invalid CPT/HCPCS format
+  flaggedMedicareOutlier: number; // price <10% or >1000% of Medicare rate
+}
+
+function isValidCptCode(code: string): boolean {
+  const trimmed = code.trim();
+  if (!trimmed) return false;
+  // Allow revenue codes (0xxx), CPT codes, and HCPCS codes
+  if (/^0\d{2,3}$/.test(trimmed)) return true; // revenue code
+  return CPT_PATTERN.test(trimmed) || HCPCS_PATTERN.test(trimmed);
+}
+
+function validateRow(row: NormalizedRow, validation: UploadValidation): boolean {
+  const priceUsd = row.priceInCents / 100;
+
+  // Reject prices under $1 (likely data errors)
+  if (priceUsd < 1) {
+    validation.skippedLowPrice++;
+    return false;
+  }
+
+  // Flag prices over $500,000 as outliers (still insert, but count)
+  if (priceUsd > 500_000) {
+    validation.flaggedHighPrice++;
+  }
+
+  // Validate CPT code format if one is provided
+  if (row.cptCode && !isValidCptCode(row.cptCode)) {
+    validation.skippedBadCpt++;
+    return false;
+  }
+
+  // Compare against Medicare rates when available
+  if (row.cptCode) {
+    const medicare = getMedicareRate(row.cptCode);
+    if (medicare) {
+      const refRate = medicare.episodeRate ?? medicare.physicianFee;
+      const refCents = refRate * 100;
+      if (row.priceInCents < refCents * 0.1 || row.priceInCents > refCents * 10) {
+        validation.flaggedMedicareOutlier++;
+      }
+    }
+  }
+
+  return true;
 }
 
 function parseCsvLine(line: string): string[] {
@@ -468,18 +525,23 @@ async function processXlsx(buffer: Buffer, filename: string) {
 
   if (allRows.length === 0) throw new Error("No valid price rows found after parsing.");
 
+  const validation: UploadValidation = { skippedLowPrice: 0, flaggedHighPrice: 0, skippedBadCpt: 0, flaggedMedicareOutlier: 0 };
+  const validRows = allRows.filter((row) => validateRow(row, validation));
+
+  if (validRows.length === 0) throw new Error("No valid price rows after validation.");
+
   const hospitalCache = new Map<string, string>();
   const procedureCache = new Map<string, string>();
   let hospitalsUpserted = 0, proceduresUpserted = 0, pricesInserted = 0;
 
-  for (let i = 0; i < allRows.length; i += 500) {
-    const stats = await flushBatch(allRows.slice(i, i + 500), filename, hospitalCache, procedureCache);
+  for (let i = 0; i < validRows.length; i += 500) {
+    const stats = await flushBatch(validRows.slice(i, i + 500), filename, hospitalCache, procedureCache);
     hospitalsUpserted += stats.hospitalsUpserted;
     proceduresUpserted += stats.proceduresUpserted;
     pricesInserted += stats.pricesInserted;
   }
 
-  return { hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: schema };
+  return { hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: schema, validation };
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +564,7 @@ export async function POST(req: NextRequest) {
       if (entries.length === 0) return NextResponse.json({ error: "ZIP contains no CSV, Excel, or JSON files." }, { status: 400 });
 
       let hospitalsUpserted = 0, proceduresUpserted = 0, pricesInserted = 0;
+      const zipValidation: UploadValidation = { skippedLowPrice: 0, flaggedHighPrice: 0, skippedBadCpt: 0, flaggedMedicareOutlier: 0 };
       for (const entry of entries) {
         const entryBuffer = Buffer.from(await entry.async("arraybuffer"));
         const entryName = entry.name.split("/").pop()!;
@@ -513,6 +576,12 @@ export async function POST(req: NextRequest) {
           hospitalsUpserted += result.hospitalsUpserted;
           proceduresUpserted += result.proceduresUpserted;
           pricesInserted += result.pricesInserted;
+          if (result.validation) {
+            zipValidation.skippedLowPrice += result.validation.skippedLowPrice;
+            zipValidation.flaggedHighPrice += result.validation.flaggedHighPrice;
+            zipValidation.skippedBadCpt += result.validation.skippedBadCpt;
+            zipValidation.flaggedMedicareOutlier += result.validation.flaggedMedicareOutlier;
+          }
         } else if (entryExt === "json") {
           const { Readable } = await import("stream");
           const nodeStream = Readable.from([entryBuffer]);
@@ -529,7 +598,8 @@ export async function POST(req: NextRequest) {
           let isCms = false, detectedFormat = false;
           for await (const { obj, hospitalName } of streamJsonObjects(streamLines(webStream))) {
             if (!detectedFormat) { isCms = "standard_charges" in obj || "codes" in obj || "billing_code_information" in obj; detectedFormat = true; }
-            batch.push(...(isCms ? cmsObjectToRows(obj, hospitalName || fallback) : flatJsonObjectToRows(obj, fallback)));
+            const rows = isCms ? cmsObjectToRows(obj, hospitalName || fallback) : flatJsonObjectToRows(obj, fallback);
+            batch.push(...rows.filter((row) => validateRow(row, zipValidation)));
             if (batch.length >= 5000) {
               const s = await flushBatch(batch, entryName, hCache, pCache);
               hospitalsUpserted += s.hospitalsUpserted; proceduresUpserted += s.proceduresUpserted; pricesInserted += s.pricesInserted;
@@ -549,7 +619,8 @@ export async function POST(req: NextRequest) {
           let batch: NormalizedRow[] = [];
           for (const cols of sheets[0].rows.slice(schema.dataStartRow)) {
             if (cols.every((c) => c === "")) continue;
-            batch.push(...applySchema(cols, schema, fallback));
+            const rows = applySchema(cols, schema, fallback);
+            batch.push(...rows.filter((row) => validateRow(row, zipValidation)));
             if (batch.length >= 5000) {
               const s = await flushBatch(batch, entryName, hCache, pCache);
               hospitalsUpserted += s.hospitalsUpserted; proceduresUpserted += s.proceduresUpserted; pricesInserted += s.pricesInserted;
@@ -562,7 +633,7 @@ export async function POST(req: NextRequest) {
           }
         }
       }
-      return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: { notes: `Processed ${entries.length} file(s) from ZIP` } });
+      return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, validation: zipValidation, schemaDetected: { notes: `Processed ${entries.length} file(s) from ZIP` } });
     }
 
     // ── JSON: fully streaming — works for any size ──────────────────────────
@@ -573,6 +644,7 @@ export async function POST(req: NextRequest) {
       let hospitalsUpserted = 0, proceduresUpserted = 0, pricesInserted = 0;
       let isCms = false, detectedFormat = false;
       let batch: NormalizedRow[] = [];
+      const validation: UploadValidation = { skippedLowPrice: 0, flaggedHighPrice: 0, skippedBadCpt: 0, flaggedMedicareOutlier: 0 };
 
       for await (const { obj, hospitalName } of streamJsonObjects(streamLines(req.body))) {
         if (!detectedFormat) {
@@ -582,7 +654,7 @@ export async function POST(req: NextRequest) {
         const rows = isCms
           ? cmsObjectToRows(obj, hospitalName || fallback)
           : flatJsonObjectToRows(obj, fallback);
-        batch.push(...rows);
+        batch.push(...rows.filter((row) => validateRow(row, validation)));
 
         if (batch.length >= 5000) {
           const stats = await flushBatch(batch, filename, hospitalCache, procedureCache);
@@ -600,8 +672,8 @@ export async function POST(req: NextRequest) {
         pricesInserted += stats.pricesInserted;
       }
 
-      if (pricesInserted === 0) return NextResponse.json({ error: "No valid price rows found in JSON file." }, { status: 400 });
-      return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: { notes: isCms ? "CMS 2.0 standard format detected" : "Flat array format detected" } });
+      if (pricesInserted === 0) return NextResponse.json({ error: "No valid price rows found in JSON file.", validation }, { status: 400 });
+      return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, validation, schemaDetected: { notes: isCms ? "CMS 2.0 standard format detected" : "Flat array format detected" } });
     }
 
     // ── XLSX: load into memory ──────────────────────────────────────────────
@@ -630,19 +702,22 @@ export async function POST(req: NextRequest) {
     const hospitalCache = new Map<string, string>();
     const procedureCache = new Map<string, string>();
     let hospitalsUpserted = 0, proceduresUpserted = 0, pricesInserted = 0;
+    const validation: UploadValidation = { skippedLowPrice: 0, flaggedHighPrice: 0, skippedBadCpt: 0, flaggedMedicareOutlier: 0 };
 
     // First flush: rows from sample that are past dataStartRow
     let batch: NormalizedRow[] = [];
     for (const cols of sampleRows.slice(schema.dataStartRow)) {
       if (cols.every((c) => c === "")) continue;
-      batch.push(...applySchema(cols, schema, fallback));
+      const rows = applySchema(cols, schema, fallback);
+      batch.push(...rows.filter((row) => validateRow(row, validation)));
     }
 
     // Continue streaming remaining lines
     for await (const line of lineGen) {
       const cols = parseCsvLine(line);
       if (cols.every((c) => c === "")) continue;
-      batch.push(...applySchema(cols, schema, fallback));
+      const rows = applySchema(cols, schema, fallback);
+      batch.push(...rows.filter((row) => validateRow(row, validation)));
 
       if (batch.length >= 5000) {
         const stats = await flushBatch(batch, filename, hospitalCache, procedureCache);
@@ -662,10 +737,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (pricesInserted === 0) {
-      return NextResponse.json({ error: "No valid price rows found after parsing.", schemaDetected: schema }, { status: 400 });
+      return NextResponse.json({ error: "No valid price rows found after parsing.", schemaDetected: schema, validation }, { status: 400 });
     }
 
-    return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: schema });
+    return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: schema, validation });
 
   } catch (err) {
     console.error("Upload error:", err);
