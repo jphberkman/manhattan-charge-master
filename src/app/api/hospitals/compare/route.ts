@@ -112,7 +112,7 @@ export async function GET(req: NextRequest) {
 
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
-  const cacheKey = `compare15:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
+  const cacheKey = `compare16:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached, {
     headers: { "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800" },
@@ -249,8 +249,8 @@ export async function GET(req: NextRequest) {
       ? Math.round(insArr.reduce((a, b) => a + b, 0) / insArr.length / 100)
       : null;
 
-    // If negotiated rate is higher than chargemaster (data error), discard it
-    const validInsRate = insuranceRate != null && chargemasterPrice != null && insuranceRate > chargemasterPrice * 1.5
+    // Only discard obviously invalid rates (>$500K likely data error)
+    const validInsRate = insuranceRate != null && insuranceRate > 500000
       ? null
       : insuranceRate;
 
