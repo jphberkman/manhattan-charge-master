@@ -1,9 +1,9 @@
 /**
- * Seeds the CmsChargeData table from CMS data.gov SODA API.
+ * Seeds the CmsChargeData table from CMS Data API v1.
  *
- * Data sources (Socrata/SODA API — free, no auth needed):
- *   - Inpatient: https://data.cms.gov/resource/97k6-zzx3.json
- *   - Outpatient: https://data.cms.gov/resource/fhn5-hzrm.json
+ * Data sources (CMS Data API v1 — free, no auth needed):
+ *   - Inpatient: data.cms.gov/data-api/v1/dataset/690ddc6c-... (2023)
+ *   - Outpatient: data.cms.gov/data-api/v1/dataset/ccbc9a44-... (2023)
  *
  * Fetches charge data for major Manhattan hospitals by CMS CCN.
  * Safe to re-run — uses upsert on (providerId, drgCode, dataYear, serviceType).
@@ -29,11 +29,17 @@ const MANHATTAN_CCNS = [
   "330234", // NYP Columbia
 ];
 
-// ── SODA API endpoints ───────────────────────────────────────────────────────
+// ── CMS Data API v1 endpoints (migrated from old SODA API) ─────────────────
 
 const ENDPOINTS = {
-  inpatient: "https://data.cms.gov/resource/97k6-zzx3.json",
-  outpatient: "https://data.cms.gov/resource/fhn5-hzrm.json",
+  inpatient: [
+    "https://data.cms.gov/data-api/v1/dataset/690ddc6c-2767-4618-b277-420ffb2bf27c/data",  // 2023
+    "https://data.cms.gov/data-api/v1/dataset/2f1e57ea-ac2f-4f62-aeb1-f8254307c395/data",  // 2022
+  ],
+  outpatient: [
+    "https://data.cms.gov/data-api/v1/dataset/ccbc9a44-40d4-46b4-a709-5caa59212e50/data",  // 2023
+    "https://data.cms.gov/data-api/v1/dataset/fc7c0217-5d97-4312-a1f4-14c3c49b1bb0/data",  // 2022
+  ],
 } as const;
 
 // ── Field name normalization ─────────────────────────────────────────────────
@@ -122,67 +128,74 @@ function normalize(row: RawRecord, serviceType: "inpatient" | "outpatient"): Nor
   };
 }
 
-// ── Fetch from SODA API ──────────────────────────────────────────────────────
+// ── Fetch from CMS Data API v1 ──────────────────────────────────────────────
+// New API uses filter[Field]=value and size/offset for pagination.
 
 async function fetchChargeData(
   serviceType: "inpatient" | "outpatient"
 ): Promise<NormalizedRecord[]> {
-  const endpoint = ENDPOINTS[serviceType];
-  const ccnList = MANHATTAN_CCNS.map((c) => `'${c}'`).join(",");
+  const endpoints = ENDPOINTS[serviceType];
+  const ccnSet = new Set(MANHATTAN_CCNS);
 
-  // Try CCN-based filter first, then city-based fallback
-  const queries = [
-    `$where=rndrng_prvdr_ccn in (${ccnList})&$limit=5000`,
-    `$where=Rndrng_Prvdr_CCN in (${ccnList})&$limit=5000`,
-    `$where=rndrng_prvdr_state_abrvtn='NY' AND rndrng_prvdr_city='NEW YORK'&$limit=5000`,
-    `$where=prvdr_num in (${ccnList})&$limit=5000`,
-  ];
-
-  for (const query of queries) {
-    const url = `${endpoint}?${query}`;
-    console.log(`  Trying: ${url.slice(0, 120)}...`);
+  for (const endpoint of endpoints) {
+    console.log(`  Trying: ${endpoint.slice(0, 90)}...`);
 
     try {
-      const res = await fetch(url, {
-        signal: AbortSignal.timeout(30000),
-        headers: { Accept: "application/json" },
-      });
+      // The Data API v1 doesn't support IN queries, so fetch by state and filter client-side
+      const allRecords: NormalizedRecord[] = [];
+      let offset = 0;
+      const pageSize = 2000;
 
-      if (!res.ok) {
-        console.log(`  HTTP ${res.status} — trying next query pattern...`);
-        continue;
+      while (true) {
+        const url = `${endpoint}?filter[Rndrng_Prvdr_State_Abrvtn]=NY&size=${pageSize}&offset=${offset}`;
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(60000),
+          headers: { Accept: "application/json" },
+        });
+
+        if (!res.ok) {
+          console.log(`  HTTP ${res.status} — trying next endpoint...`);
+          break;
+        }
+
+        const data: RawRecord[] = await res.json();
+        if (!data.length) break;
+
+        for (const row of data) {
+          const rec = normalize(row, serviceType);
+          if (rec && ccnSet.has(rec.providerId)) {
+            allRecords.push(rec);
+          }
+        }
+
+        console.log(`    Page at offset ${offset}: ${data.length} rows, ${allRecords.length} Manhattan matches`);
+        offset += pageSize;
+
+        // Safety: stop after 50 pages (100K rows)
+        if (offset >= 100000) break;
+        // If we got fewer than page size, we're done
+        if (data.length < pageSize) break;
       }
 
-      const data: RawRecord[] = await res.json();
-      if (!data.length) {
-        console.log(`  No results — trying next query pattern...`);
-        continue;
+      if (allRecords.length > 0) {
+        console.log(`  Got ${allRecords.length} Manhattan records.`);
+        return allRecords;
       }
 
-      console.log(`  Got ${data.length} raw records.`);
-
-      // Normalize and filter
-      const records: NormalizedRecord[] = [];
-      for (const row of data) {
-        const rec = normalize(row, serviceType);
-        if (rec) records.push(rec);
-      }
-
-      console.log(`  Normalized to ${records.length} valid records.`);
-      return records;
+      console.log(`  No Manhattan matches — trying next endpoint...`);
     } catch (err) {
       console.log(`  Fetch error: ${err instanceof Error ? err.message : err}`);
       continue;
     }
   }
 
-  console.log(`  All query patterns exhausted for ${serviceType}. Returning empty.`);
+  console.log(`  All endpoints exhausted for ${serviceType}. Returning empty.`);
   return [];
 }
 
 // ── Upsert into database ─────────────────────────────────────────────────────
 
-const DATA_YEAR = 2022; // CMS data.gov currently has 2022 data
+const DATA_YEAR = 2023; // CMS Data API v1 currently has 2023 data
 
 async function upsertBatch(records: NormalizedRecord[], serviceType: "inpatient" | "outpatient") {
   const BATCH_SIZE = 100;

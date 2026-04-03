@@ -2,8 +2,8 @@
  * Seeds CptCode table with CMS MPFS (Medicare Physician Fee Schedule) data.
  * Populates facilityRate, nonFacilityRate, and totalRvu for Manhattan locality.
  *
- * Data source: CMS MPFS Public Use File via data.cms.gov SODA API.
- * Falls back to computing from existing medicareRate if API is unavailable.
+ * Data source: CMS PFS portal CSV (pfs.data.cms.gov).
+ * Falls back to computing from existing medicareRate if download fails.
  *
  * Also updates Hospital records with CMS CCN (Provider ID) for Manhattan hospitals.
  *
@@ -50,72 +50,89 @@ interface ParsedRate {
   totalRvu: number;
 }
 
-/* ---------- SODA API fetch ---------- */
+/* ---------- CMS PFS CSV download ---------- */
 
-const SODA_ENDPOINTS = [
-  // 2025 MPFS PUF — try multiple known resource IDs
-  "https://data.cms.gov/resource/8we4-shhx.json",
-  "https://data.cms.gov/resource/hi7n-wgkc.json",
-  "https://data.cms.gov/resource/aah4-99qh.json",
+// CMS PFS portal CSV URLs — try most recent first
+const PFS_CSV_URLS = [
+  "https://pfs.data.cms.gov/sites/default/files/data/indicators2025-09-23-2025.csv",
+  "https://pfs.data.cms.gov/sites/default/files/data/indicators2026-02-10-2026.csv",
 ];
 
-async function fetchFromSodaApi(): Promise<ParsedRate[]> {
+async function fetchFromPfsCsv(): Promise<ParsedRate[]> {
   const results: ParsedRate[] = [];
 
-  for (const baseUrl of SODA_ENDPOINTS) {
-    console.log(`Trying SODA endpoint: ${baseUrl}`);
+  for (const csvUrl of PFS_CSV_URLS) {
+    console.log(`Trying PFS CSV: ${csvUrl}`);
 
     try {
-      // Try different locality filter formats
-      const queries = [
-        `${baseUrl}?$limit=50000&$where=locality='01' OR locality='00'`,
-        `${baseUrl}?$limit=50000&$where=mac_locality='01' OR mac_locality='00'`,
-        `${baseUrl}?$limit=50000&locality=01`,
-      ];
+      const resp = await fetch(csvUrl, {
+        signal: AbortSignal.timeout(60000),
+        headers: { "User-Agent": "Mozilla/5.0 (compatible; PriceTransparency/1.0)" },
+      });
 
-      for (const url of queries) {
-        try {
-          const resp = await fetch(url, {
-            headers: { Accept: "application/json" },
-            signal: AbortSignal.timeout(30000),
-          });
+      if (!resp.ok) {
+        console.log(`  HTTP ${resp.status} — trying next URL...`);
+        continue;
+      }
 
-          if (!resp.ok) continue;
+      const text = await resp.text();
+      const lines = text.split("\n");
+      if (lines.length < 2) {
+        console.log(`  Empty CSV — trying next URL...`);
+        continue;
+      }
 
-          const rows: MpfsRow[] = await resp.json();
-          if (!Array.isArray(rows) || rows.length === 0) continue;
+      // Parse header to find column indices
+      const header = lines[0].toLowerCase().split(",").map((h) => h.trim().replace(/"/g, ""));
+      const hcpcIdx = header.findIndex((h) => h === "hcpc" || h === "hcpcs" || h === "hcpcs_code");
+      // PFS CSV has total RVU columns — need to multiply by conversion factor for dollar amount
+      const facTotalIdx = header.indexOf("full_fac_total");    // Total facility RVUs
+      const nfacTotalIdx = header.indexOf("full_nfac_total");  // Total non-facility RVUs
+      const transFacIdx = header.indexOf("trans_fac_total");   // Transitional facility RVUs (fallback)
+      const transNfacIdx = header.indexOf("trans_nfac_total"); // Transitional non-fac RVUs (fallback)
+      const cfIdx = header.indexOf("conv_fact");               // Conversion factor
+      const rvuWorkIdx = header.indexOf("rvu_work");           // Work RVU
 
-          console.log(`  Got ${rows.length} rows from ${url.split("?")[0]}`);
+      if (hcpcIdx === -1) {
+        console.log(`  Could not find HCPC column in header: ${header.slice(0, 10).join(", ")}...`);
+        continue;
+      }
 
-          for (const row of rows) {
-            const code = (row.hcpcs_code || row.hcpcs_cd || "").trim();
-            if (!code || code.length < 4) continue;
+      console.log(`  Header: hcpc=${hcpcIdx}, full_fac_total=${facTotalIdx}, full_nfac_total=${nfacTotalIdx}, conv_fact=${cfIdx}`);
+      console.log(`  Parsing ${lines.length - 1} data rows...`);
 
-            const facilityRate = parseFloat(
-              row.facility_fee_amount || row.pf_facility || "0"
-            );
-            const nonFacilityRate = parseFloat(
-              row.non_facility_fee_amount || row.pf_nonfacility || "0"
-            );
-            const totalRvu = parseFloat(
-              row.total_rvu || row.tot_rvu || "0"
-            );
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(",").map((c) => c.trim().replace(/"/g, ""));
+        const code = (cols[hcpcIdx] || "").trim();
+        if (!code || code.length < 4) continue;
 
-            if (facilityRate > 0 || nonFacilityRate > 0) {
-              results.push({ code, facilityRate, nonFacilityRate, totalRvu });
-            }
-          }
+        // Get conversion factor (should be ~32.35 for 2025)
+        const cf = cfIdx >= 0 ? parseFloat(cols[cfIdx]) || 32.3465 : 32.3465;
 
-          if (results.length > 0) {
-            console.log(`  Parsed ${results.length} valid MPFS rates.\n`);
-            return results;
-          }
-        } catch {
-          // try next query format
+        // Total RVUs → multiply by CF to get dollar amounts
+        const facRvu = (facTotalIdx >= 0 ? parseFloat(cols[facTotalIdx]) : 0) ||
+                       (transFacIdx >= 0 ? parseFloat(cols[transFacIdx]) : 0) || 0;
+        const nfacRvu = (nfacTotalIdx >= 0 ? parseFloat(cols[nfacTotalIdx]) : 0) ||
+                        (transNfacIdx >= 0 ? parseFloat(cols[transNfacIdx]) : 0) || 0;
+
+        const facilityRate = Math.round(facRvu * cf * 100) / 100;
+        const nonFacilityRate = Math.round(nfacRvu * cf * 100) / 100;
+        const totalRvu = facRvu || nfacRvu;
+
+        if (facilityRate > 0 || nonFacilityRate > 0) {
+          results.push({ code, facilityRate, nonFacilityRate, totalRvu });
         }
       }
-    } catch {
-      // try next endpoint
+
+      if (results.length > 0) {
+        console.log(`  Parsed ${results.length} valid MPFS rates.\n`);
+        return results;
+      }
+
+      console.log(`  No valid rates found — trying next URL...`);
+    } catch (err) {
+      console.log(`  Fetch error: ${err instanceof Error ? err.message : err}`);
+      continue;
     }
   }
 
@@ -241,11 +258,11 @@ async function seedHospitalCcns() {
 async function main() {
   console.log("=== CMS MPFS Rate Seeder ===\n");
 
-  // Step 1: Fetch rates from SODA API or fall back
-  let rates = await fetchFromSodaApi();
+  // Step 1: Fetch rates from CMS PFS CSV or fall back
+  let rates = await fetchFromPfsCsv();
 
   if (rates.length === 0) {
-    console.log("SODA API returned no results.\n");
+    console.log("PFS CSV returned no results.\n");
     rates = await deriveFromExistingRates();
   }
 
