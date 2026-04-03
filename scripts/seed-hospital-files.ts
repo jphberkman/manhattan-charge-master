@@ -588,9 +588,13 @@ async function main() {
       const filename = `${file.hospitalName.replace(/[^a-zA-Z0-9]/g, "_")}.${ext}`;
       const filePath = await downloadFile(file.url, filename);
 
-      // Auto-detect format from file content (ZIP may contain different format than declared)
-      const firstBytes = readFileSync(filePath, { encoding: "utf-8", flag: "r" }).slice(0, 100).trimStart();
-      const actualFormat = firstBytes.startsWith("{") || firstBytes.startsWith("[") ? "cms-json" : "cms-csv";
+      // Auto-detect format: read first 100 bytes via low-level fd (safe for multi-GB files)
+      const fd = require("fs").openSync(filePath, "r");
+      const peek = Buffer.alloc(100);
+      require("fs").readSync(fd, peek, 0, 100, 0);
+      require("fs").closeSync(fd);
+      const head = peek.toString("utf-8").trimStart();
+      const actualFormat = head.startsWith("{") || head.startsWith("[") ? "cms-json" as const : "cms-csv" as const;
       if (actualFormat !== file.format) {
         console.log(`  Note: file is ${actualFormat} (declared as ${file.format})`);
       }
