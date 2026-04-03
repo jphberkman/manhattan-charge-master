@@ -7,6 +7,7 @@ import { GlossaryTip } from "./GlossaryTip";
 import type { HospitalComparisonEntry, CompareResponse } from "@/app/api/hospitals/compare/route";
 import type { MedicareBenchmark } from "@/lib/medicare";
 import type { InsuranceSelection } from "./InsuranceSelector";
+import { calculatePatientCost, type PlanDetails, type CostBreakdown } from "@/lib/cost-calculator";
 
 const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const fmtNull = (v: number | null) => (v == null ? "—" : fmt.format(v));
@@ -19,10 +20,11 @@ interface Props {
   insurance: InsuranceSelection | null;
   coinsurance: number;
   allCptCodes?: string[];
+  planDetails?: PlanDetails | null;
   onPricesLoaded?: (entries: HospitalComparisonEntry[]) => void;
 }
 
-export function HospitalCostComparison({ cptCode, procedureName, insurance, coinsurance, allCptCodes, onPricesLoaded }: Props) {
+export function HospitalCostComparison({ cptCode, procedureName, insurance, coinsurance, allCptCodes, planDetails, onPricesLoaded }: Props) {
   const [entries, setEntries] = useState<HospitalComparisonEntry[]>([]);
   const [medicare, setMedicare] = useState<MedicareBenchmark | null>(null);
   const [loading, setLoading] = useState(false);
@@ -53,13 +55,30 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
 
   useEffect(() => { load(); }, [load]);
 
+  // When planDetails is provided, recalculate patient costs client-side
+  const getPatientCost = (entry: HospitalComparisonEntry): number | null => {
+    if (planDetails && entry.insuranceRate != null) {
+      const result = calculatePatientCost(entry.insuranceRate, planDetails);
+      return result.patientCost;
+    }
+    return entry.patientCost;
+  };
+
+  const getCostBreakdown = (entry: HospitalComparisonEntry): CostBreakdown | null => {
+    if (planDetails && entry.insuranceRate != null) {
+      return calculatePatientCost(entry.insuranceRate, planDetails);
+    }
+    return null;
+  };
+
   const showIns = insurance != null && insurance.payerType !== "cash";
 
   // Per-entry savings % with insurance vs cash (positive = insurance is cheaper)
   // Capped to avoid nonsensical values (e.g. >100% or extreme negatives)
   const savingsPct = (e: HospitalComparisonEntry): number | null => {
-    if (e.patientCost != null && e.cashPrice != null && e.cashPrice > 0) {
-      const raw = Math.round(((e.cashPrice - e.patientCost) / e.cashPrice) * 100);
+    const cost = getPatientCost(e);
+    if (cost != null && e.cashPrice != null && e.cashPrice > 0) {
+      const raw = Math.round(((e.cashPrice - cost) / e.cashPrice) * 100);
       return Math.max(-99, Math.min(99, raw));
     }
     return null;
@@ -67,7 +86,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
 
   const sortVal = (e: HospitalComparisonEntry) => {
     if (sortKey === "rank") return e.rank;
-    if (sortKey === "patientCost") return e.patientCost ?? Infinity;
+    if (sortKey === "patientCost") return getPatientCost(e) ?? Infinity;
     if (sortKey === "cash") return e.cashPrice ?? Infinity;
     if (sortKey === "insurance") return e.insuranceRate ?? Infinity;
     if (sortKey === "savings") { const pct = savingsPct(e); return pct != null ? -pct : Infinity; }
@@ -79,7 +98,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
     return sortDir === "asc" ? d : -d;
   });
 
-  const withIns  = entries.filter((e) => e.patientCost != null && e.patientCost > 0).sort((a, b) => (a.patientCost ?? 0) - (b.patientCost ?? 0));
+  const withIns  = entries.filter((e) => getPatientCost(e) != null && (getPatientCost(e) ?? 0) > 0).sort((a, b) => (getPatientCost(a) ?? 0) - (getPatientCost(b) ?? 0));
   const withCash = entries.filter((e) => e.cashPrice != null && e.cashPrice > 0).sort((a, b) => (a.cashPrice ?? 0) - (b.cashPrice ?? 0));
 
   const cheapestIns   = withIns[0] ?? null;
@@ -87,10 +106,10 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
   const cheapestCash  = withCash[0] ?? null;
   const costliestCash = withCash.at(-1) ?? null;
 
-  const insSavings  = cheapestIns && costliestIns  ? (costliestIns.patientCost  ?? 0) - (cheapestIns.patientCost  ?? 0) : 0;
+  const insSavings  = cheapestIns && costliestIns  ? (getPatientCost(costliestIns) ?? 0) - (getPatientCost(cheapestIns) ?? 0) : 0;
   const cashSavings = cheapestCash && costliestCash ? (costliestCash.cashPrice   ?? 0) - (cheapestCash.cashPrice   ?? 0) : 0;
 
-  const maxPatient = Math.max(...entries.map((e) => e.patientCost ?? 0), 1);
+  const maxPatient = Math.max(...entries.map((e) => getPatientCost(e) ?? 0), 1);
   const maxCash    = Math.max(...entries.map((e) => e.cashPrice ?? 0), 1);
 
   const toggleSort = (key: SortKey) => {
@@ -169,6 +188,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                 <p className="text-sm text-green-800">
                   Choosing <strong>{cheapestIns?.hospital.name}</strong> over <strong>{costliestIns?.hospital.name}</strong> saves you{" "}
                   <strong className="text-green-700 text-base">{fmt.format(insSavings)}</strong> out of pocket with your insurance.
+                  {planDetails && " (calculated with your plan details)"}
                 </p>
               </div>
             </div>
@@ -193,7 +213,9 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                 const isBestIns  = showIns && cheapestIns?.hospital.id === entry.hospital.id;
                 const isBestCash = cheapestCash?.hospital.id === entry.hospital.id;
                 const pct = savingsPct(entry);
-                const savingsVsWorstIns = (costliestIns?.patientCost ?? 0) - (entry.patientCost ?? 0);
+                const entryPatientCost = getPatientCost(entry);
+                const entryBreakdown = getCostBreakdown(entry);
+                const savingsVsWorstIns = (getPatientCost(costliestIns!) ?? 0) - (entryPatientCost ?? 0);
                 const savingsVsWorstCash = (costliestCash?.cashPrice ?? 0) - (entry.cashPrice ?? 0);
 
                 return (
@@ -218,12 +240,19 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                       {entry.hospital.name}
                     </p>
 
-                    {showIns && entry.patientCost != null ? (
+                    {showIns && entryPatientCost != null ? (
                       <>
                         <p className={cn("mt-1 font-bold", isWinner ? "text-2xl text-green-700" : "text-xl text-neutral-800")}>
-                          {fmt.format(entry.patientCost)}
+                          {fmt.format(entryPatientCost)}
                         </p>
                         <p className="text-xs text-neutral-400">your estimated cost after insurance pays</p>
+                        {entryBreakdown && (
+                          <p className="mt-0.5 text-[10px] text-violet-600">
+                            {entryBreakdown.oopCapApplied
+                              ? "Capped at OOP max"
+                              : `Deductible: ${fmt.format(entryBreakdown.deductiblePortion)} + Coinsurance: ${fmt.format(entryBreakdown.coinsurancePortion)}`}
+                          </p>
+                        )}
                         {entry.cashPrice != null && (
                           <p className="mt-1 text-xs text-neutral-500">Without insurance: {fmt.format(entry.cashPrice)}</p>
                         )}
@@ -309,8 +338,10 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                   const isBestCash = cheapestCash?.hospital.id === entry.hospital.id;
                   const isHighlight = showIns ? isBestIns : isBestCash;
                   const pct = savingsPct(entry);
+                  const rowPatientCost = getPatientCost(entry);
+                  const rowBreakdown = getCostBreakdown(entry);
 
-                  const patientBarPct = entry.patientCost != null ? Math.round((entry.patientCost / maxPatient) * 100) : 0;
+                  const patientBarPct = rowPatientCost != null ? Math.round((rowPatientCost / maxPatient) * 100) : 0;
                   const cashBarPct    = entry.cashPrice   != null ? Math.round((entry.cashPrice   / maxCash)    * 100) : 0;
 
                   return (
@@ -406,9 +437,16 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                               "font-mono font-bold",
                               isBestIns ? "text-green-700 text-base" : "text-violet-700 text-sm"
                             )}>
-                              {fmtNull(entry.patientCost)}
+                              {fmtNull(rowPatientCost)}
                             </span>
-                            {entry.patientCost != null && (
+                            {rowBreakdown && (
+                              <p className="mt-0.5 text-[10px] text-violet-500 text-right">
+                                {rowBreakdown.oopCapApplied
+                                  ? "Capped at OOP max"
+                                  : `Ded: ${fmt.format(rowBreakdown.deductiblePortion)} + Coins: ${fmt.format(rowBreakdown.coinsurancePortion)}`}
+                              </p>
+                            )}
+                            {rowPatientCost != null && (
                               <div className="mt-1.5 h-1.5 w-20 ml-auto rounded-full bg-neutral-100">
                                 <div
                                   className={cn("h-1.5 rounded-full transition-all", isBestIns ? "bg-green-500" : "bg-violet-400")}
@@ -453,6 +491,11 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
             <p className="text-xs text-neutral-400">
               &quot;Your cost&quot; = what you owe after your insurance pays its share ·
               &quot;Insurance saves&quot; = how much less you pay vs paying the full cash price yourself
+              {planDetails && (
+                <span className="block mt-1 text-violet-500 font-medium">
+                  Costs calculated using your plan details (deductible, coinsurance, OOP max)
+                </span>
+              )}
             </p>
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-neutral-400">
               <span>

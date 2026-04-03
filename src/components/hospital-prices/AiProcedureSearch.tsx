@@ -4,16 +4,20 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Search, Loader2, ChevronDown, ChevronUp, CircleDot,
   Stethoscope, Wrench, AlertCircle, ListCollapse, Sparkles,
-  DatabaseZap, FileX, ShieldCheck, X, Receipt,
+  DatabaseZap, FileX, ShieldCheck, X, Receipt, Calculator, ArrowLeftRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ProcedureBreakdown, BreakdownComponent } from "@/app/api/procedure-breakdown/route";
+import type { ProcedureBreakdown, BreakdownComponent, AlternativeProcedure } from "@/app/api/procedure-breakdown/route";
+import { ProcedureAlternatives } from "./ProcedureAlternatives";
 import type { ProcedureSearchResponse, ProcedureSearchResult } from "@/app/api/procedure-search/route";
 import type { HospitalComparisonEntry } from "@/app/api/hospitals/compare/route";
 import { InsuranceSelector, type InsuranceSelection } from "./InsuranceSelector";
 import { HospitalCostComparison } from "./HospitalCostComparison";
 import { PhysicianRecommendations } from "./PhysicianRecommendation";
 import { GlossaryTip } from "./GlossaryTip";
+import type { PlanDetails } from "@/lib/cost-calculator";
+import { CustomPlanInput } from "./CustomPlanInput";
+import { PlanComparisonMode } from "./PlanComparisonMode";
 
 export type { ProcedureBreakdown };
 
@@ -110,6 +114,13 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
   const [showInsurancePicker, setShowInsurancePicker] = useState(false);
   const [insurancePickerExpanded, setInsurancePickerExpanded] = useState(false);
 
+  // Custom plan details — overrides flat coinsurance when set
+  const [planDetails, setPlanDetails]   = useState<PlanDetails | null>(null);
+  const [showPlanInput, setShowPlanInput] = useState(false);
+
+  // Plan comparison mode toggle
+  const [showComparison, setShowComparison] = useState(false);
+
   // Background AI status — separate from phase so it never blocks hospital prices
   const [aiStatus, setAiStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
 
@@ -141,6 +152,9 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
     setHospitalPrices([]);
     setShowInsurancePicker(false);
     setInsurancePickerExpanded(false);
+    setPlanDetails(null);
+    setShowPlanInput(false);
+    setShowComparison(false);
     setAiStatus("idle");
     phaseTimers.current.forEach(clearTimeout);
     if (elapsedTimer.current)  { clearInterval(elapsedTimer.current);  elapsedTimer.current  = null; }
@@ -588,27 +602,64 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
 
           {/* Coinsurance selector */}
           {showInsurance && (
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">
-              <p className="text-xs font-medium text-neutral-500 shrink-0">How much does your plan cover?</p>
-              <div className="flex flex-wrap gap-1.5 ml-auto">
-                {COINSURANCE_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.label}
-                    onClick={() => setCoinsurance(opt.value)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all",
-                      coinsurance === opt.value
-                        ? "border-violet-500 bg-violet-600 text-white"
-                        : "border-neutral-200 bg-white text-neutral-600 hover:border-violet-300",
-                    )}
-                  >
-                    {opt.label}
-                    <span className={cn("font-normal", coinsurance === opt.value ? "text-violet-200" : "text-neutral-400")}>
-                      {opt.sublabel}
-                    </span>
-                  </button>
-                ))}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">
+                <p className="text-xs font-medium text-neutral-500 shrink-0">How much does your plan cover?</p>
+                <div className="flex flex-wrap gap-1.5 ml-auto">
+                  {planDetails ? (
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-500 bg-violet-600 px-3 py-1 text-xs font-semibold text-white">
+                        <Calculator className="size-3" /> Using your plan details
+                      </span>
+                      <button
+                        onClick={() => { setPlanDetails(null); setShowPlanInput(false); }}
+                        className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-400 hover:text-red-500 hover:border-red-200 transition-colors"
+                      >
+                        <X className="size-3" /> Clear
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {COINSURANCE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.label}
+                          onClick={() => { setCoinsurance(opt.value); setShowPlanInput(false); }}
+                          className={cn(
+                            "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all",
+                            coinsurance === opt.value && !showPlanInput
+                              ? "border-violet-500 bg-violet-600 text-white"
+                              : "border-neutral-200 bg-white text-neutral-600 hover:border-violet-300",
+                          )}
+                        >
+                          {opt.label}
+                          <span className={cn("font-normal", coinsurance === opt.value && !showPlanInput ? "text-violet-200" : "text-neutral-400")}>
+                            {opt.sublabel}
+                          </span>
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setShowPlanInput((v) => !v)}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all",
+                          showPlanInput
+                            ? "border-violet-500 bg-violet-600 text-white"
+                            : "border-neutral-200 bg-white text-neutral-600 hover:border-violet-300",
+                        )}
+                      >
+                        <Calculator className="size-3" />
+                        Enter my plan details
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
+              {showPlanInput && !planDetails && (
+                <CustomPlanInput
+                  planDetails={planDetails}
+                  onChange={(plan) => { setPlanDetails(plan); if (plan) setShowPlanInput(false); }}
+                  defaultCoinsurance={Math.round(coinsurance * 100)}
+                />
+              )}
             </div>
           )}
 
@@ -621,14 +672,37 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
           )}
 
           {/* Hospital comparison — loads immediately, upgrades silently when AI breakdown arrives */}
-          <HospitalCostComparison
-            cptCode={breakdown?.cptCode ?? selectedMatch.cptCode}
-            procedureName={breakdown?.procedureName ?? selectedMatch.name}
-            insurance={insurance}
-            coinsurance={coinsurance}
+          {showComparison ? (
+            <PlanComparisonMode
+              cptCode={breakdown?.cptCode ?? selectedMatch.cptCode}
+              procedureName={breakdown?.procedureName ?? selectedMatch.name}
+              coinsurance={coinsurance}
+              allCptCodes={breakdown ? [breakdown.cptCode ?? selectedMatch.cptCode] : undefined}
+            />
+          ) : (
+            <HospitalCostComparison
+              cptCode={breakdown?.cptCode ?? selectedMatch.cptCode}
+              procedureName={breakdown?.procedureName ?? selectedMatch.name}
+              insurance={insurance}
+              coinsurance={coinsurance}
+              planDetails={planDetails}
+              onPricesLoaded={setHospitalPrices}
+            />
+          )}
 
-            onPricesLoaded={setHospitalPrices}
-          />
+          {/* Compare plans toggle */}
+          <button
+            onClick={() => setShowComparison((v) => !v)}
+            className={cn(
+              "flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-all",
+              showComparison
+                ? "border-violet-500 bg-violet-600 text-white hover:bg-violet-700"
+                : "border-neutral-200 bg-white text-neutral-600 hover:border-violet-300 hover:text-violet-700",
+            )}
+          >
+            <ArrowLeftRight className="size-4" />
+            {showComparison ? "Back to single plan view" : "Compare insurance plans"}
+          </button>
 
           {/* Physician recommendations */}
           <PhysicianRecommendations
@@ -697,14 +771,37 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
       {/* ── AI-only results (no-data path) — hospital comparison + physicians ── */}
       {phase === "ai-results" && breakdown && !selectedMatch && (
         <>
-          <HospitalCostComparison
-            cptCode={breakdown.cptCode ?? ""}
-            procedureName={breakdown.procedureName}
-            insurance={insurance}
-            coinsurance={coinsurance}
+          {showComparison ? (
+            <PlanComparisonMode
+              cptCode={breakdown.cptCode ?? ""}
+              procedureName={breakdown.procedureName}
+              coinsurance={coinsurance}
+            />
+          ) : (
+            <HospitalCostComparison
+              cptCode={breakdown.cptCode ?? ""}
+              procedureName={breakdown.procedureName}
+              insurance={insurance}
+              coinsurance={coinsurance}
+              planDetails={planDetails}
+              onPricesLoaded={setHospitalPrices}
+            />
+          )}
 
-            onPricesLoaded={setHospitalPrices}
-          />
+          {/* Compare plans toggle */}
+          <button
+            onClick={() => setShowComparison((v) => !v)}
+            className={cn(
+              "flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-all",
+              showComparison
+                ? "border-violet-500 bg-violet-600 text-white hover:bg-violet-700"
+                : "border-neutral-200 bg-white text-neutral-600 hover:border-violet-300 hover:text-violet-700",
+            )}
+          >
+            <ArrowLeftRight className="size-4" />
+            {showComparison ? "Back to single plan view" : "Compare insurance plans"}
+          </button>
+
           <PhysicianRecommendations
             procedureName={breakdown.procedureName}
             cptCode={breakdown.cptCode ?? null}
@@ -744,12 +841,16 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                     : breakdown.description}
                 </p>
                 {breakdown.conditionAnalysis?.alternatives?.length ? (
-                  <div className="mt-2 flex flex-wrap gap-2 items-center">
-                    <span className="text-xs text-white/50">Also considered:</span>
-                    {breakdown.conditionAnalysis.alternatives.map((alt) => (
-                      <span key={alt} className="rounded-full bg-white/15 px-2.5 py-0.5 text-xs text-white/80">{alt}</span>
-                    ))}
-                  </div>
+                  <ProcedureAlternatives
+                    primaryProcedure={breakdown.procedureName}
+                    primaryCptCode={breakdown.cptCode}
+                    primaryCostRange={[breakdown.cashTotalLow, breakdown.cashTotalHigh]}
+                    alternatives={breakdown.conditionAnalysis.alternatives as AlternativeProcedure[]}
+                    onSelectAlternative={(name) => {
+                      setQuery(name);
+                      searchDb(name);
+                    }}
+                  />
                 ) : null}
               </div>
               <button
@@ -763,30 +864,67 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
 
           {/* Coinsurance selector */}
           {showInsurance && (
-            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">
-              <p className="text-xs font-medium text-neutral-500 shrink-0">How much does your plan cover?</p>
-              <div className="flex flex-wrap gap-1.5 ml-auto">
-                {COINSURANCE_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.label}
-                    onClick={() => setCoinsurance(opt.value)}
-                    className={cn(
-                      "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all",
-                      coinsurance === opt.value
-                        ? "border-violet-500 bg-violet-600 text-white"
-                        : "border-neutral-200 bg-white text-neutral-600 hover:border-violet-300",
-                    )}
-                  >
-                    {opt.label}
-                    <span className={cn("font-normal", coinsurance === opt.value ? "text-violet-200" : "text-neutral-400")}>
-                      {opt.sublabel}
-                    </span>
-                  </button>
-                ))}
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3">
+                <p className="text-xs font-medium text-neutral-500 shrink-0">How much does your plan cover?</p>
+                <div className="flex flex-wrap gap-1.5 ml-auto">
+                  {planDetails ? (
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-500 bg-violet-600 px-3 py-1 text-xs font-semibold text-white">
+                        <Calculator className="size-3" /> Using your plan details
+                      </span>
+                      <button
+                        onClick={() => { setPlanDetails(null); setShowPlanInput(false); }}
+                        className="flex items-center gap-1 rounded-full border border-neutral-200 bg-white px-2.5 py-1 text-xs text-neutral-400 hover:text-red-500 hover:border-red-200 transition-colors"
+                      >
+                        <X className="size-3" /> Clear
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {COINSURANCE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.label}
+                          onClick={() => { setCoinsurance(opt.value); setShowPlanInput(false); }}
+                          className={cn(
+                            "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all",
+                            coinsurance === opt.value && !showPlanInput
+                              ? "border-violet-500 bg-violet-600 text-white"
+                              : "border-neutral-200 bg-white text-neutral-600 hover:border-violet-300",
+                          )}
+                        >
+                          {opt.label}
+                          <span className={cn("font-normal", coinsurance === opt.value && !showPlanInput ? "text-violet-200" : "text-neutral-400")}>
+                            {opt.sublabel}
+                          </span>
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setShowPlanInput((v) => !v)}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold transition-all",
+                          showPlanInput
+                            ? "border-violet-500 bg-violet-600 text-white"
+                            : "border-neutral-200 bg-white text-neutral-600 hover:border-violet-300",
+                        )}
+                      >
+                        <Calculator className="size-3" />
+                        Enter my plan details
+                      </button>
+                    </>
+                  )}
+                </div>
+                <p className="w-full text-xs text-neutral-400 mt-0.5">
+                  Not sure? Most employer plans are &ldquo;Insurance covers most.&rdquo;
+                </p>
               </div>
-              <p className="w-full text-xs text-neutral-400 mt-0.5">
-                Not sure? Most employer plans are &ldquo;Insurance covers most.&rdquo;
-              </p>
+              {showPlanInput && !planDetails && (
+                <CustomPlanInput
+                  planDetails={planDetails}
+                  onChange={(plan) => { setPlanDetails(plan); if (plan) setShowPlanInput(false); }}
+                  defaultCoinsurance={Math.round(coinsurance * 100)}
+                />
+              )}
             </div>
           )}
 

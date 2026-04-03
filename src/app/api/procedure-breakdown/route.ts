@@ -27,12 +27,23 @@ export interface BreakdownComponent {
   dataSource: "real" | "estimated";
 }
 
+export interface AlternativeProcedure {
+  name: string;
+  cptCode: string;
+  approach: string;
+  estimatedCostLow: number;
+  estimatedCostHigh: number;
+  typicalRecovery: string;
+  pros: string;
+  cons: string;
+}
+
 export interface ConditionAnalysis {
   originalQuery: string;
   isConditionDescription: boolean;
   identifiedProcedure: string;
   reasoning: string;
-  alternatives?: string[];
+  alternatives?: AlternativeProcedure[];
 }
 
 export interface ProcedureBreakdown {
@@ -307,6 +318,7 @@ Use this reasoning to ensure the bill includes EVERY component a patient would a
 RULES:
 1. Handle both condition descriptions (e.g. "torn ACL") and direct procedure names.
 2. For conditions, identify the most appropriate surgical procedure first (most common treatment, not the most aggressive).
+2b. For the "alternatives" array, return structured objects ONLY when genuinely different surgical approaches exist (e.g. arthroscopic vs open, robotic vs laparoscopic). Include CPT codes so users can search for detailed costs. Cost estimates should be rough Manhattan full-episode ranges. Recovery times should be realistic ranges. Return an empty array if there are no meaningful alternatives.
 3. For surgical procedures, list every individual implant, screw, plate, nail, anchor, and graft separately with HCPCS codes.
 4. If CHARGEMASTER DATA is provided in the user message, never fabricate prices for those CPT codes — use those exact ranges.
 5. Manhattan hospital prices are significantly higher than national averages — apply a 1.4–1.8x multiplier vs. national benchmarks.
@@ -344,7 +356,18 @@ Return a complete JSON breakdown:
     "isConditionDescription": <true if user described a condition, false if they named a procedure directly>,
     "identifiedProcedure": "Procedure identified from their description",
     "reasoning": "1-2 sentences explaining why this procedure is appropriate",
-    "alternatives": ["Alternative 1 if applicable"]
+    "alternatives": [
+      {
+        "name": "Alternative procedure name",
+        "cptCode": "CPT code for the alternative",
+        "approach": "e.g. Arthroscopic vs Open",
+        "estimatedCostLow": <integer USD rough Manhattan lower bound for full episode>,
+        "estimatedCostHigh": <integer USD rough Manhattan upper bound for full episode>,
+        "typicalRecovery": "e.g. 4-6 months",
+        "pros": "Brief advantage of this approach",
+        "cons": "Brief disadvantage of this approach"
+      }
+    ]
   },
   "components": [
     {
