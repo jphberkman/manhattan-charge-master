@@ -344,15 +344,23 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                             </div>
                             <div className="mt-0.5 flex items-center gap-2">
                               <p className="max-w-[200px] truncate text-xs text-neutral-400">{entry.hospital.address}</p>
-                              {entry.dataQuality === "real" ? (
+                              {entry.dataSource === "chargemaster" && entry.dataQuality === "real" ? (
                                 <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 bg-emerald-50 rounded px-1.5 py-0.5">
-                                  <ShieldCheck className="size-2.5" /> Chargemaster
+                                  <ShieldCheck className="size-2.5" /> Hospital published
                                 </span>
-                              ) : entry.dataLastUpdated ? (
+                              ) : entry.dataSource === "chargemaster" ? (
                                 <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
-                                  Partial data
+                                  Hospital published · no insurer rate for this procedure
                                 </span>
-                              ) : null}
+                              ) : entry.dataSource === "cms-avg" ? (
+                                <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-blue-600 bg-blue-50 rounded px-1.5 py-0.5">
+                                  <Info className="size-2.5" /> CMS average · not from hospital file
+                                </span>
+                              ) : (
+                                <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-neutral-400 bg-neutral-100 rounded px-1.5 py-0.5">
+                                  No chargemaster data found
+                                </span>
+                              )}
                               {entry.dataLastUpdated && (
                                 <p className="shrink-0 text-[10px] text-neutral-300">
                                   {new Date(entry.dataLastUpdated).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
@@ -441,16 +449,25 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
           </div>
 
           {/* Footer */}
-          <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 space-y-1">
+          <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 space-y-1.5">
             <p className="text-xs text-neutral-400">
               &quot;Your cost&quot; = what you owe after your insurance pays its share ·
               &quot;Insurance saves&quot; = how much less you pay vs paying the full cash price yourself
             </p>
-            <p className="text-[10px] text-neutral-300">
-              <ShieldCheck className="inline size-2.5 text-emerald-500 mr-0.5" />
-              <strong className="text-neutral-400">Chargemaster</strong> = real prices from hospital price transparency files (required by federal law) ·
-              <strong className="text-neutral-400">Partial data</strong> = only some price types available for this procedure
-            </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-neutral-400">
+              <span>
+                <ShieldCheck className="inline size-2.5 text-emerald-500 mr-0.5" />
+                <strong>Hospital published</strong> = directly from the hospital&apos;s price transparency file
+              </span>
+              <span>
+                <Info className="inline size-2.5 text-blue-400 mr-0.5" />
+                <strong>CMS average</strong> = Medicare claims average, not from the hospital&apos;s own file
+              </span>
+              <span>
+                <span className="inline-block size-2.5 rounded-full bg-neutral-300 mr-0.5 align-middle" />
+                <strong>No data</strong> = hospital did not publish pricing for this procedure
+              </span>
+            </div>
           </div>
         </>
       )}

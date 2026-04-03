@@ -18,6 +18,8 @@ export interface HospitalComparisonEntry {
   cashPrice: number | null;
   payerName: string | null;
   dataQuality: "real" | "partial";
+  /** Where this data came from */
+  dataSource: "chargemaster" | "cms-avg" | "none";
   isAiEstimate: boolean;
   dataLastUpdated: string | null;
   rank: number;
@@ -112,7 +114,7 @@ export async function GET(req: NextRequest) {
 
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
-  const cacheKey = `compare16:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
+  const cacheKey = `compare17:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached, {
     headers: { "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800" },
@@ -269,6 +271,7 @@ export async function GET(req: NextRequest) {
       cashPrice,
       payerName: m.payerName,
       dataQuality: validInsRate != null && cashPrice != null ? "real" : "partial",
+      dataSource: "chargemaster",
       isAiEstimate: false,
       dataLastUpdated: m.lastSeeded?.toISOString() ?? null,
       rank: 0,
@@ -323,6 +326,7 @@ export async function GET(req: NextRequest) {
         cashPrice,
         payerName: null,
         dataQuality: "partial" as const,
+        dataSource: "cms-avg",
         isAiEstimate: false,
         dataLastUpdated: null,
         rank: 0,
