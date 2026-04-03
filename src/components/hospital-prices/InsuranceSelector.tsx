@@ -192,8 +192,8 @@ const INSURERS: Insurer[] = [
 /** Renders actual company logo image for commercial, Lucide icon for gov/cash. */
 function InsurerLogo({ insurer, size = "md" }: { insurer: Insurer; size?: "sm" | "md" }) {
   const [imgError, setImgError] = useState(false);
-  const iconPx = size === "sm" ? "size-4" : "size-5";
-  const boxSize = size === "sm" ? "size-7" : "size-9";
+  const iconPx = size === "sm" ? "size-5" : "size-6";
+  const boxH = size === "sm" ? "h-8" : "h-12";
 
   if (insurer.logoType === "icon") {
     const Icon =
@@ -205,7 +205,7 @@ function InsurerLogo({ insurer, size = "md" }: { insurer: Insurer; size?: "sm" |
       insurer.logoUrl === "medicaid" ? "bg-emerald-50 text-emerald-600" :
       "bg-amber-50 text-amber-600";
     return (
-      <span className={cn("inline-flex items-center justify-center rounded-xl", boxSize, bg)}>
+      <span className={cn("inline-flex items-center justify-center rounded-xl w-full", boxH, bg)}>
         <Icon className={iconPx} strokeWidth={1.8} />
       </span>
     );
@@ -215,21 +215,21 @@ function InsurerLogo({ insurer, size = "md" }: { insurer: Insurer; size?: "sm" |
   if (imgError) {
     return (
       <span
-        className={cn("inline-flex items-center justify-center rounded-xl bg-neutral-50 border border-neutral-100 font-extrabold tracking-tight leading-none", boxSize, size === "sm" ? "text-[8px]" : "text-[10px]")}
+        className={cn("inline-flex items-center justify-center rounded-xl bg-neutral-50 w-full font-extrabold tracking-tight leading-none", boxH, size === "sm" ? "text-xs" : "text-sm")}
         style={{ color: insurer.brandColor }}
       >
-        {insurer.shortName.charAt(0)}
+        {insurer.shortName}
       </span>
     );
   }
 
   return (
-    <span className={cn("inline-flex items-center justify-center rounded-xl bg-white border border-neutral-100 overflow-hidden p-1", boxSize)}>
+    <span className={cn("inline-flex items-center justify-center rounded-xl bg-white overflow-hidden px-2 w-full", boxH)}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={insurer.logoUrl}
         alt={insurer.shortName}
-        className="size-full object-contain"
+        className="h-full w-full object-contain"
         loading="lazy"
         onError={() => setImgError(true)}
       />
@@ -305,7 +305,7 @@ export function InsuranceSelector({ value, onChange, onDone }: Props) {
                 key={insurer.name}
                 onClick={() => handleInsurerClick(insurer)}
                 className={cn(
-                  "relative flex flex-col items-center gap-1.5 rounded-xl border px-2 py-3 text-center transition-all",
+                  "relative flex flex-col items-center gap-2 rounded-xl border px-3 py-4 text-center transition-all",
                   isSelected
                     ? "border-violet-500 bg-violet-50 shadow-sm ring-1 ring-violet-500"
                     : "border-neutral-200 bg-white hover:border-violet-200 hover:bg-violet-50/40"

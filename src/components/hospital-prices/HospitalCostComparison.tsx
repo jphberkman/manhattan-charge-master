@@ -344,9 +344,18 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                             </div>
                             <div className="mt-0.5 flex items-center gap-2">
                               <p className="max-w-[200px] truncate text-xs text-neutral-400">{entry.hospital.address}</p>
+                              {entry.dataQuality === "real" ? (
+                                <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 bg-emerald-50 rounded px-1.5 py-0.5">
+                                  <ShieldCheck className="size-2.5" /> Chargemaster
+                                </span>
+                              ) : entry.dataLastUpdated ? (
+                                <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
+                                  Partial data
+                                </span>
+                              ) : null}
                               {entry.dataLastUpdated && (
-                                <p className="shrink-0 text-xs text-neutral-300">
-                                  Data: {new Date(entry.dataLastUpdated).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                                <p className="shrink-0 text-[10px] text-neutral-300">
+                                  {new Date(entry.dataLastUpdated).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
                                 </p>
                               )}
                             </div>
@@ -432,9 +441,16 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
           </div>
 
           {/* Footer */}
-          <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 text-xs text-neutral-400">
-            &quot;Your cost&quot; = what you owe after your insurance pays its share ·
-            &quot;Insurance saves&quot; = how much less you pay vs paying the full cash price yourself
+          <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 space-y-1">
+            <p className="text-xs text-neutral-400">
+              &quot;Your cost&quot; = what you owe after your insurance pays its share ·
+              &quot;Insurance saves&quot; = how much less you pay vs paying the full cash price yourself
+            </p>
+            <p className="text-[10px] text-neutral-300">
+              <ShieldCheck className="inline size-2.5 text-emerald-500 mr-0.5" />
+              <strong className="text-neutral-400">Chargemaster</strong> = real prices from hospital price transparency files (required by federal law) ·
+              <strong className="text-neutral-400">Partial data</strong> = only some price types available for this procedure
+            </p>
           </div>
         </>
       )}
