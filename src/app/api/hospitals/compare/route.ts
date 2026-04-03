@@ -112,7 +112,7 @@ export async function GET(req: NextRequest) {
 
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
-  const cacheKey = `compare13:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
+  const cacheKey = `compare14:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached, {
     headers: { "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800" },
@@ -249,24 +249,26 @@ export async function GET(req: NextRequest) {
       ? Math.round(insArr.reduce((a, b) => a + b, 0) / insArr.length / 100)
       : null;
 
+    // If negotiated rate is higher than chargemaster (data error), discard it
+    const validInsRate = insuranceRate != null && chargemasterPrice != null && insuranceRate > chargemasterPrice * 1.5
+      ? null
+      : insuranceRate;
+
     // Must have at least one real price to show
-    if (insuranceRate == null && cashPrice == null) continue;
+    if (validInsRate == null && cashPrice == null) continue;
 
-    const patientCost = insuranceRate != null ? Math.round(insuranceRate * coinsurance) : null;
-    const insurerPays = insuranceRate != null ? Math.round(insuranceRate * (1 - coinsurance)) : null;
-
-    const dataQuality: "real" | "partial" =
-      insuranceRate != null && cashPrice != null ? "real" : "partial";
+    const patientCost = validInsRate != null ? Math.round(validInsRate * coinsurance) : null;
+    const insurerPays = validInsRate != null ? Math.round(validInsRate * (1 - coinsurance)) : null;
 
     entries.push({
       hospital: m.hospital,
       chargemasterPrice,
-      insuranceRate,
+      insuranceRate: validInsRate,
       patientCost,
       insurerPays,
       cashPrice,
       payerName: m.payerName,
-      dataQuality,
+      dataQuality: validInsRate != null && cashPrice != null ? "real" : "partial",
       isAiEstimate: false,
       dataLastUpdated: m.lastSeeded?.toISOString() ?? null,
       rank: 0,

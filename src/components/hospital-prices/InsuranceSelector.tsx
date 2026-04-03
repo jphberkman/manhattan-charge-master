@@ -23,8 +23,10 @@ interface Insurer {
   name: string;
   shortName: string;
   payerType: InsuranceSelection["payerType"];
-  logo: string;                  // URL for commercial insurers, "medicare" | "medicaid" | "cash" for icon-based
-  logoType: "image" | "icon";    // whether to render as <img> or a Lucide icon
+  /** Brand color for the logo circle (hex), or "medicare" | "medicaid" | "cash" for icon-based */
+  brandColor: string;
+  /** "brand" = colored circle with brand initial, "icon" = Lucide icon */
+  logoType: "brand" | "icon";
   tagline: string;
   plans: Plan[];
 }
@@ -34,8 +36,8 @@ const INSURERS: Insurer[] = [
     name: "Aetna",
     shortName: "Aetna",
     payerType: "commercial",
-    logo: "https://logo.clearbit.com/aetna.com",
-    logoType: "image",
+    brandColor: "#7D3F98",
+    logoType: "brand",
     tagline: "Large national network",
     plans: [
       { name: "PPO",  description: "See any doctor, no referral needed. Most flexible.", typicalDeductible: "$1,500 – $3,500/yr", network: "Very large — almost all NYC hospitals", yourShare: "Usually 20% after deductible" },
@@ -48,8 +50,8 @@ const INSURERS: Insurer[] = [
     name: "Cigna",
     shortName: "Cigna",
     payerType: "commercial",
-    logo: "https://logo.clearbit.com/cigna.com",
-    logoType: "image",
+    brandColor: "#E47825",
+    logoType: "brand",
     tagline: "Strong in employer plans",
     plans: [
       { name: "PPO",  description: "See any doctor, no referral needed.", typicalDeductible: "$1,500 – $4,000/yr", network: "Very large — most NYC hospitals in-network", yourShare: "Usually 20% after deductible" },
@@ -62,8 +64,8 @@ const INSURERS: Insurer[] = [
     name: "UnitedHealthcare",
     shortName: "United",
     payerType: "commercial",
-    logo: "https://logo.clearbit.com/uhc.com",
-    logoType: "image",
+    brandColor: "#002677",
+    logoType: "brand",
     tagline: "Largest US insurer",
     plans: [
       { name: "PPO",           description: "Maximum flexibility — no referrals, any doctor.", typicalDeductible: "$1,500 – $4,500/yr", network: "Enormous — all major NYC hospitals", yourShare: "Usually 20% after deductible" },
@@ -76,8 +78,8 @@ const INSURERS: Insurer[] = [
     name: "Empire Blue Cross Blue Shield",
     shortName: "Empire BCBS",
     payerType: "commercial",
-    logo: "https://logo.clearbit.com/empireblue.com",
-    logoType: "image",
+    brandColor: "#0075C9",
+    logoType: "brand",
     tagline: "New York's BCBS plan",
     plans: [
       { name: "PPO",          description: "Full flexibility, no referrals needed.", typicalDeductible: "$1,500 – $4,000/yr", network: "Very large NY & national network", yourShare: "Usually 20% after deductible" },
@@ -90,8 +92,8 @@ const INSURERS: Insurer[] = [
     name: "Oxford Health Plans",
     shortName: "Oxford",
     payerType: "commercial",
-    logo: "https://logo.clearbit.com/oxhp.com",
-    logoType: "image",
+    brandColor: "#5C2D91",
+    logoType: "brand",
     tagline: "Strong NYC hospital access",
     plans: [
       { name: "PPO",          description: "See any doctor anywhere, no referrals.", typicalDeductible: "$1,500 – $4,000/yr", network: "Large NYC-focused network", yourShare: "Usually 20% after deductible" },
@@ -103,8 +105,8 @@ const INSURERS: Insurer[] = [
     name: "Emblem Health",
     shortName: "Emblem",
     payerType: "commercial",
-    logo: "https://logo.clearbit.com/emblemhealth.com",
-    logoType: "image",
+    brandColor: "#00A651",
+    logoType: "brand",
     tagline: "NYC-based, strong local network",
     plans: [
       { name: "PPO",         description: "Flexible, no referrals required.", typicalDeductible: "$1,500 – $3,500/yr", network: "Strong NYC hospital network", yourShare: "Usually 20% after deductible" },
@@ -116,8 +118,8 @@ const INSURERS: Insurer[] = [
     name: "Oscar Health",
     shortName: "Oscar",
     payerType: "commercial",
-    logo: "https://logo.clearbit.com/hioscar.com",
-    logoType: "image",
+    brandColor: "#FF4F00",
+    logoType: "brand",
     tagline: "Modern, app-based, NYC-friendly",
     plans: [
       { name: "PPO", description: "Full flexibility, concierge-style support app.", typicalDeductible: "$1,500 – $4,000/yr", network: "Good NYC coverage", yourShare: "Usually 20% after deductible" },
@@ -129,8 +131,8 @@ const INSURERS: Insurer[] = [
     name: "Humana",
     shortName: "Humana",
     payerType: "commercial",
-    logo: "https://logo.clearbit.com/humana.com",
-    logoType: "image",
+    brandColor: "#4DB848",
+    logoType: "brand",
     tagline: "Strong Medicare Advantage options",
     plans: [
       { name: "PPO",        description: "Flexible, no referrals needed.", typicalDeductible: "$1,500 – $4,000/yr", network: "Large national network", yourShare: "Usually 20% after deductible" },
@@ -142,7 +144,7 @@ const INSURERS: Insurer[] = [
     name: "Medicare",
     shortName: "Medicare",
     payerType: "medicare",
-    logo: "medicare",
+    brandColor: "medicare",
     logoType: "icon",
     tagline: "Federal insurance for 65+",
     plans: [
@@ -154,7 +156,7 @@ const INSURERS: Insurer[] = [
     name: "Medicaid",
     shortName: "Medicaid",
     payerType: "medicaid",
-    logo: "medicaid",
+    brandColor: "medicaid",
     logoType: "icon",
     tagline: "Free/low-cost for qualifying New Yorkers",
     plans: [
@@ -165,7 +167,7 @@ const INSURERS: Insurer[] = [
     name: "Self-Pay / Cash",
     shortName: "No insurance",
     payerType: "cash",
-    logo: "cash",
+    brandColor: "cash",
     logoType: "icon",
     tagline: "No insurance — pay directly",
     plans: [
@@ -174,53 +176,35 @@ const INSURERS: Insurer[] = [
   },
 ];
 
-/** Renders a carrier logo (image) or a Lucide icon for government/cash entries. */
+/** Renders a branded colored circle with carrier initial, or a Lucide icon for gov/cash. */
 function InsurerLogo({ insurer, size = "md" }: { insurer: Insurer; size?: "sm" | "md" }) {
-  const px = size === "sm" ? "size-7" : "size-8";
+  const px = size === "sm" ? "size-7" : "size-9";
   const iconPx = size === "sm" ? "size-4" : "size-5";
   const textSize = size === "sm" ? "text-xs" : "text-sm";
 
   if (insurer.logoType === "icon") {
     const Icon =
-      insurer.logo === "medicare" ? Landmark :
-      insurer.logo === "medicaid" ? Hospital :
+      insurer.brandColor === "medicare" ? Landmark :
+      insurer.brandColor === "medicaid" ? Hospital :
       Banknote;
     const bg =
-      insurer.logo === "medicare" ? "bg-blue-100 text-blue-600" :
-      insurer.logo === "medicaid" ? "bg-emerald-100 text-emerald-600" :
+      insurer.brandColor === "medicare" ? "bg-blue-100 text-blue-600" :
+      insurer.brandColor === "medicaid" ? "bg-emerald-100 text-emerald-600" :
       "bg-amber-100 text-amber-600";
     return (
-      <span className={cn("inline-flex items-center justify-center rounded-lg", px, bg)}>
+      <span className={cn("inline-flex items-center justify-center rounded-xl", px, bg)}>
         <Icon className={iconPx} strokeWidth={1.8} />
       </span>
     );
   }
 
-  // Image logo with error fallback
+  // Branded colored circle with carrier initial
   return (
-    <span className={cn("inline-flex items-center justify-center rounded-lg bg-neutral-50 overflow-hidden", px)}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={insurer.logo}
-        alt={`${insurer.shortName} logo`}
-        className="size-full object-contain p-1"
-        onError={(e) => {
-          // On load failure, replace with first-letter fallback
-          const target = e.currentTarget;
-          const parent = target.parentElement;
-          if (parent) {
-            target.style.display = "none";
-            // Only add fallback if not already added
-            if (!parent.querySelector("[data-fallback]")) {
-              const fallback = document.createElement("span");
-              fallback.setAttribute("data-fallback", "true");
-              fallback.className = `font-bold text-neutral-500 ${textSize}`;
-              fallback.textContent = insurer.shortName.charAt(0).toUpperCase();
-              parent.appendChild(fallback);
-            }
-          }
-        }}
-      />
+    <span
+      className={cn("inline-flex items-center justify-center rounded-xl font-bold text-white", px, textSize)}
+      style={{ backgroundColor: insurer.brandColor }}
+    >
+      {insurer.shortName.charAt(0).toUpperCase()}
     </span>
   );
 }

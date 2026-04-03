@@ -53,12 +53,14 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
 
   useEffect(() => { load(); }, [load]);
 
-  const showIns = !insurance || insurance.payerType !== "cash";
+  const showIns = insurance != null && insurance.payerType !== "cash";
 
   // Per-entry savings % with insurance vs cash (positive = insurance is cheaper)
+  // Capped to avoid nonsensical values (e.g. >100% or extreme negatives)
   const savingsPct = (e: HospitalComparisonEntry): number | null => {
     if (e.patientCost != null && e.cashPrice != null && e.cashPrice > 0) {
-      return Math.round(((e.cashPrice - e.patientCost) / e.cashPrice) * 100);
+      const raw = Math.round(((e.cashPrice - e.patientCost) / e.cashPrice) * 100);
+      return Math.max(-99, Math.min(99, raw));
     }
     return null;
   };
