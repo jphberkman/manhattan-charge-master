@@ -176,11 +176,9 @@ const INSURERS: Insurer[] = [
   },
 ];
 
-/** Renders a branded colored circle with carrier initial, or a Lucide icon for gov/cash. */
+/** Renders a branded logo mark: colored brand name for commercial, Lucide icon for gov/cash. */
 function InsurerLogo({ insurer, size = "md" }: { insurer: Insurer; size?: "sm" | "md" }) {
-  const px = size === "sm" ? "size-7" : "size-9";
   const iconPx = size === "sm" ? "size-4" : "size-5";
-  const textSize = size === "sm" ? "text-xs" : "text-sm";
 
   if (insurer.logoType === "icon") {
     const Icon =
@@ -188,23 +186,26 @@ function InsurerLogo({ insurer, size = "md" }: { insurer: Insurer; size?: "sm" |
       insurer.brandColor === "medicaid" ? Hospital :
       Banknote;
     const bg =
-      insurer.brandColor === "medicare" ? "bg-blue-100 text-blue-600" :
-      insurer.brandColor === "medicaid" ? "bg-emerald-100 text-emerald-600" :
-      "bg-amber-100 text-amber-600";
+      insurer.brandColor === "medicare" ? "bg-blue-50 text-blue-600" :
+      insurer.brandColor === "medicaid" ? "bg-emerald-50 text-emerald-600" :
+      "bg-amber-50 text-amber-600";
     return (
-      <span className={cn("inline-flex items-center justify-center rounded-xl", px, bg)}>
+      <span className={cn("inline-flex items-center justify-center rounded-lg", size === "sm" ? "size-7" : "h-9 w-12", bg)}>
         <Icon className={iconPx} strokeWidth={1.8} />
       </span>
     );
   }
 
-  // Branded colored circle with carrier initial
+  // Branded text logo — company name in their official brand color
   return (
     <span
-      className={cn("inline-flex items-center justify-center rounded-xl font-bold text-white", px, textSize)}
-      style={{ backgroundColor: insurer.brandColor }}
+      className={cn(
+        "inline-flex items-center justify-center rounded-lg bg-neutral-50 border border-neutral-100 font-extrabold tracking-tight leading-none",
+        size === "sm" ? "h-7 px-1.5 text-[9px]" : "h-9 px-2 text-[11px]"
+      )}
+      style={{ color: insurer.brandColor }}
     >
-      {insurer.shortName.charAt(0).toUpperCase()}
+      {insurer.shortName}
     </span>
   );
 }

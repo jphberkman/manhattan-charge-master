@@ -12,11 +12,12 @@
  */
 
 import { PrismaClient } from "../src/generated/prisma";
-import { createWriteStream, createReadStream, existsSync, mkdirSync } from "fs";
+import { createWriteStream, createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 import { createInterface } from "readline";
 import * as path from "path";
+import JSZip from "jszip";
 
 const prisma = new PrismaClient();
 
@@ -90,27 +91,29 @@ const HOSPITAL_FILES: HospitalFile[] = [
     url: "https://d2cg6hcwj0g0z0.cloudfront.net/131624135-1598703019_ny-society-for-the-relief-of-ruptured-and-crippled-maintaing-the-hospital-for-special-surgery_standardcharges.json",
     format: "cms-json",
   },
+  // NYP changed EIN and moved to Widen CDN (ZIP containing JSON). Updated 2026-04.
   {
     key: "nyp",
     hospitalName: "NewYork-Presbyterian Hospital",
     address: "525 E 68th St, New York, NY 10065",
-    url: "https://www.nyp.org/documents/standard-charges/332840241_newyork-presbyterian-hospital_standardcharges.csv",
-    format: "cms-csv",
-    skipLines: 2,
+    url: "https://nyp.widen.net/content/hisgjrgpuk/original/133957095_NewYork-Presbyterian-Hospital_standardcharges.json.zip?u=n8xzey&download=true",
+    format: "cms-json",
   },
+  // Northwell hosts on their own site (ZIP containing CSV). Updated 2026-04.
   {
     key: "northwell",
     hospitalName: "Lenox Hill Hospital",
     address: "100 E 77th St, New York, NY 10075",
-    url: "https://nwhcpricetransparency.b-cdn.net/131624064_Lenox-Hill-Hospital_standardcharges.csv",
+    url: "https://www.northwell.edu/sites/northwell.edu/files/machine-readable-files/Lenox_Hill_Hospital_StandardCharges.zip",
     format: "cms-csv",
     skipLines: 2,
   },
+  // NYC H+H uses Panacea portal (ZIP containing CSV). Updated 2026-04.
   {
     key: "bellevue",
     hospitalName: "Bellevue Hospital Center",
     address: "462 1st Ave, New York, NY 10016",
-    url: "https://www.nychealthandhospitals.org/price-transparency/bellevue/133893681_Bellevue-Hospital-Center_standardcharges.csv",
+    url: "https://nychh.pt.panaceainc.com/MRFDownload/nychh/bellevue",
     format: "cms-csv",
     skipLines: 2,
   },
@@ -402,11 +405,31 @@ async function downloadFile(url: string, filename: string): Promise<string> {
   console.log(`  Downloading: ${url.slice(0, 80)}...`);
   const res = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; PriceTransparency/1.0)" },
+    redirect: "follow",
   });
   if (!res.ok) throw new Error(`Download failed: ${res.status} ${res.statusText}`);
 
   const body = res.body;
   if (!body) throw new Error("No response body");
+
+  // Check if it's a ZIP (by URL or content-type)
+  const contentType = res.headers.get("content-type") ?? "";
+  const isZip = url.includes(".zip") || contentType.includes("zip") || contentType.includes("octet-stream");
+
+  if (isZip) {
+    console.log(`  ZIP detected — extracting...`);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const zip = await JSZip.loadAsync(buffer);
+    const files = Object.keys(zip.files).filter((f) => !f.startsWith("__MACOSX") && !f.startsWith("."));
+    // Find the main data file (largest CSV or JSON)
+    const dataFile = files.find((f) => f.endsWith(".json")) ?? files.find((f) => f.endsWith(".csv")) ?? files[0];
+    if (!dataFile) throw new Error("No data file found in ZIP");
+    console.log(`  Extracting: ${dataFile} (from ${files.length} files in ZIP)`);
+    const content = await zip.files[dataFile].async("nodebuffer");
+    writeFileSync(filePath, content);
+    console.log(`  Saved: ${filePath} (${(content.length / 1024 / 1024).toFixed(1)} MB)`);
+    return filePath;
+  }
 
   const writer = createWriteStream(filePath);
   await pipeline(Readable.fromWeb(body as import("stream/web").ReadableStream), writer);
