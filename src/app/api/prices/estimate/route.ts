@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
   });
 
   if (realPrices.length > 0) {
-    const realEntries: (PriceApiEntry & { source: "database" })[] = realPrices
+    const realEntries: PriceApiEntry[] = realPrices
       .map((r) => ({
         id: r.id,
         hospital: { id: r.hospital.id, name: r.hospital.name, address: r.hospital.address },
@@ -56,7 +56,9 @@ export async function GET(req: NextRequest) {
         payerType: r.payerType as PriceApiEntry["payerType"],
         priceUsd: r.priceInCents / 100,
         priceType: r.priceType as PriceApiEntry["priceType"],
-        source: "database" as const,
+        source: "mrf" as const,
+        dataLastUpdated: null,
+        hospitalSourceFile: null,
       }))
       .sort((a, b) => a.priceUsd - b.priceUsd);
 

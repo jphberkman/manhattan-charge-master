@@ -1,12 +1,19 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { TrendingDown, TrendingUp, Minus, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
+import { TrendingDown, TrendingUp, Minus, ArrowUpDown, ArrowUp, ArrowDown, ChevronDown, ChevronUp, ShieldCheck, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PriceApiEntry } from "@/lib/price-transparency/types";
 
 const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const fmtPct = (n: number) => `${n > 0 ? "+" : ""}${n.toFixed(0)}%`;
+
+const SOURCE_BADGE: Record<string, { label: string; icon: typeof ShieldCheck; className: string }> = {
+  mrf:     { label: "Hospital published",  icon: ShieldCheck, className: "text-emerald-600 bg-emerald-50" },
+  cms:     { label: "CMS data",            icon: Info,        className: "text-blue-600 bg-blue-50" },
+  upload:  { label: "Uploaded",            icon: Info,        className: "text-violet-600 bg-violet-50" },
+  dolthub: { label: "DoltHub open data",   icon: Info,        className: "text-amber-600 bg-amber-50" },
+};
 
 const COINSURANCE_OPTIONS = [
   { label: "Insurance pays almost everything", sublabel: "I pay ~10%", value: 0.10 },
@@ -23,6 +30,8 @@ export interface HospitalPriceRow {
   cash: number | null;
   diff: number | null;      // cash - negotiated (negative = cash is cheaper)
   diffPct: number | null;
+  source: string | null;
+  dataLastUpdated: string | null;
 }
 
 function buildRows(
@@ -57,6 +66,8 @@ function buildRows(
       diff = cashPrice - negotiated;
       diffPct = (diff / negotiated) * 100;
     }
+    // Prefer source info from insurance entry, fall back to cash entry
+    const primary = ins ?? cash;
     rows.push({
       hospital,
       negotiated,
@@ -64,6 +75,8 @@ function buildRows(
       cash: cashPrice,
       diff,
       diffPct,
+      source: primary?.source ?? null,
+      dataLastUpdated: primary?.dataLastUpdated ?? null,
     });
   }
 
@@ -297,6 +310,22 @@ export function InsurancePriceTable({ insurancePrices, cashPrices, insuranceLabe
                           {row.negotiatedPayerName && (
                             <p className="mt-0.5 text-xs text-violet-500">{row.negotiatedPayerName}</p>
                           )}
+                          <div className="mt-0.5 flex items-center gap-2">
+                            {row.source && (() => {
+                              const badge = SOURCE_BADGE[row.source] ?? SOURCE_BADGE.mrf;
+                              const Icon = badge.icon;
+                              return (
+                                <span className={cn("shrink-0 inline-flex items-center gap-1 text-[10px] font-medium rounded px-1.5 py-0.5", badge.className)}>
+                                  <Icon className="size-2.5" /> {badge.label}
+                                </span>
+                              );
+                            })()}
+                            {row.dataLastUpdated && (
+                              <span className="shrink-0 text-[10px] text-neutral-300">
+                                {new Date(row.dataLastUpdated).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </td>

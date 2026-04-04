@@ -18,6 +18,8 @@ export interface HospitalConfig {
   format: "cms-json" | "nyu-csv" | "hhc-csv";
 }
 
+export type DataSource = "mrf" | "cms" | "upload" | "dolthub";
+
 export interface PriceApiEntry {
   id: string;
   hospital: { id: string; name: string; address: string };
@@ -25,4 +27,7 @@ export interface PriceApiEntry {
   payerType: PayerType;
   priceUsd: number;
   priceType: PriceType;
+  source: DataSource;
+  dataLastUpdated: string | null;
+  hospitalSourceFile: string | null;
 }

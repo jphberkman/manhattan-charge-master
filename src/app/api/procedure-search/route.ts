@@ -15,6 +15,7 @@ export interface ProcedureSearchResult {
   priceCount: number;
   hospitalCount: number;
   matchScore: number;
+  matchQuality: "exact" | "strong" | "partial" | "weak";
 }
 
 export interface ProcedureSearchResponse {
@@ -48,12 +49,18 @@ export async function POST(req: NextRequest) {
   let cptCodes: string[] = [];
   const cptDescriptions = new Map<string, string>();
 
+  const cptConfidence = new Map<string, number>();
+
   if (isCptQuery) {
     cptCodes = [query.trim()];
+    cptConfidence.set(query.trim(), 100);
   } else {
     const cptMatches = await searchCptCodes(query, 10);
     cptCodes = cptMatches.map((m) => m.code);
-    for (const m of cptMatches) cptDescriptions.set(m.code, m.description);
+    for (const m of cptMatches) {
+      cptDescriptions.set(m.code, m.description);
+      cptConfidence.set(m.code, m.confidence);
+    }
   }
 
   if (!cptCodes.length) {
@@ -88,16 +95,24 @@ export async function POST(req: NextRequest) {
   // We skip expensive per-procedure hospital/price counts. The compare API
   // provides detailed per-hospital data when the user selects a procedure.
 
-  const cptOrder = new Map(cptCodes.map((c, i) => [c, i]));
   const results: ProcedureSearchResult[] = procedures
-    .map((p) => ({
-      cptCode: p.cptCode,
-      name: cptDescriptions.get(p.cptCode) ?? p.name,
-      category: p.category,
-      priceCount: 1, // placeholder — real counts shown in compare view
-      hospitalCount: 0, // placeholder — real counts shown in compare view
-      matchScore: cptCodes.length - (cptOrder.get(p.cptCode) ?? cptCodes.length),
-    }))
+    .map((p) => {
+      const confidence = cptConfidence.get(p.cptCode) ?? 0;
+      const matchQuality: ProcedureSearchResult["matchQuality"] =
+        confidence >= 100 ? "exact" :
+        confidence > 80   ? "strong" :
+        confidence >= 50  ? "partial" :
+                            "weak";
+      return {
+        cptCode: p.cptCode,
+        name: cptDescriptions.get(p.cptCode) ?? p.name,
+        category: p.category,
+        priceCount: 1, // placeholder — real counts shown in compare view
+        hospitalCount: 0, // placeholder — real counts shown in compare view
+        matchScore: confidence,
+        matchQuality,
+      };
+    })
     .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, 10);
 

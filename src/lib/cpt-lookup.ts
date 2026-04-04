@@ -13,6 +13,8 @@ import { redis } from "@/lib/redis";
 export interface CptMatch {
   code: string;
   description: string;
+  confidence: number;    // 0-100 score based on internal scoring logic
+  matchReason: string;   // explanation of why this code matched
 }
 
 /** Common English words that add noise. */
@@ -71,8 +73,14 @@ export async function searchCptCodes(
         select: { code: true, description: true },
         take: limit,
       });
-      try { await redis.set(cacheKey, rows, { ex: 86400 }); } catch { /* ignore */ }
-      return rows;
+      const results: CptMatch[] = rows.map((r) => ({
+        code: r.code,
+        description: r.description,
+        confidence: r.code === trimmed.toUpperCase() ? 100 : 90,
+        matchReason: r.code === trimmed.toUpperCase() ? "Exact CPT code match" : `CPT code prefix match (${trimmed.toUpperCase()}*)`,
+      }));
+      try { await redis.set(cacheKey, results, { ex: 86400 }); } catch { /* ignore */ }
+      return results;
     }
 
     const keywords = extractKeywords(trimmed);
@@ -121,14 +129,32 @@ export async function searchCptCodes(
     for (const r of conditionRows) {
       if (seenCodes.has(r.cptCode)) continue;
       seenCodes.add(r.cptCode);
-      conditionResults.push({ code: r.cptCode, description: r.procedureName });
+      // Confidence: combine SQL keyword score (proportion of keywords matched) + weight
+      const keywordPct = keywords.length > 0 ? (Number(r.score) / keywords.length) * 100 : 0;
+      const weightBonus = Math.min(Number(r.weight) * 5, 20); // up to 20 bonus pts from weight
+      const confidence = Math.min(100, Math.round(keywordPct + weightBonus));
+      conditionResults.push({
+        code: r.cptCode,
+        description: r.procedureName,
+        confidence,
+        matchReason: `Condition mapping: ${Number(r.score)}/${keywords.length} keywords matched (weight ${r.weight})`,
+      });
       if (conditionResults.length >= limit) break;
     }
 
     // CptCode results (already ordered by score DESC)
     const cptResults: CptMatch[] = cptRows
       .slice(0, limit)
-      .map((r) => ({ code: r.code, description: r.description }));
+      .map((r) => {
+        const keywordPct = keywords.length > 0 ? (Number(r.score) / keywords.length) * 100 : 0;
+        const confidence = Math.min(100, Math.round(keywordPct));
+        return {
+          code: r.code,
+          description: r.description,
+          confidence,
+          matchReason: `Description keyword match: ${Number(r.score)}/${keywords.length} keywords matched`,
+        };
+      });
 
     // Prefer condition mappings (curated symptom→procedure), fall back to CptCode
     const results = conditionResults.length ? conditionResults : cptResults;

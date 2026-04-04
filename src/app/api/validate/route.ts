@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import { prisma } from "@/lib/prisma";
 import { anthropicCall } from "@/lib/anthropic-fetch";
+import { getMedicareRate } from "@/lib/medicare";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -52,10 +53,10 @@ export interface ValidationSample {
   procedureName: string;
   realPriceLow: number;
   realPriceHigh: number;
-  aiEstimateLow: number;
-  aiEstimateHigh: number;
+  medicareBenchmarkLow: number;
+  medicareBenchmarkHigh: number;
   errorPct: number;
-  accurate: boolean; // within 30%
+  accurate: boolean; // within expected commercial multiplier range (1.5-6x Medicare)
 }
 
 export interface ValidateResult {
@@ -262,7 +263,12 @@ async function saveRows(rows: NormalizedRow[]) {
   return { hospitalsUpserted, proceduresUpserted, pricesInserted };
 }
 
-// ── AI accuracy validation ────────────────────────────────────────────────────
+// ── Medicare-based validation ─────────────────────────────────────────────────
+// Compares uploaded prices against Medicare benchmarks using commercial multiplier
+// ranges (1.5-6x Medicare) instead of AI-generated price estimates.
+
+const COMMERCIAL_MULTIPLIER_LOW = 1.5;
+const COMMERCIAL_MULTIPLIER_HIGH = 6.0;
 
 async function validateSample(rows: NormalizedRow[]): Promise<ValidationSample[]> {
   const byCode = new Map<string, NormalizedRow[]>();
@@ -279,36 +285,53 @@ async function validateSample(rows: NormalizedRow[]): Promise<ValidationSample[]
 
   if (candidates.length === 0) return [];
 
-  const items = candidates.map(([code, rs], i) => {
+  const results: ValidationSample[] = [];
+
+  for (const [code, rs] of candidates) {
+    const medicare = getMedicareRate(code);
+    if (!medicare) continue; // skip CPTs without a Medicare benchmark
+
+    const benchmarkRate = medicare.episodeRate ?? medicare.physicianFee;
+    const multiplierLow = medicare.commercialMultiplierLow ?? COMMERCIAL_MULTIPLIER_LOW;
+    const multiplierHigh = medicare.commercialMultiplierHigh ?? COMMERCIAL_MULTIPLIER_HIGH;
+    const expectedLow = benchmarkRate * multiplierLow;
+    const expectedHigh = benchmarkRate * multiplierHigh;
+
     const comPrices = rs.filter((r) => r.payerType === "commercial" && r.priceInCents > 0).map((r) => r.priceInCents / 100);
     const cashPrices = rs.filter((r) => r.payerType === "cash" && r.priceInCents > 0).map((r) => r.priceInCents / 100);
-    return { index: i, cptCode: code, procedureName: rs[0].procedureName, realCommercial: comPrices.length ? [comPrices.reduce((a, b) => a < b ? a : b), comPrices.reduce((a, b) => a > b ? a : b)] : null, realCash: cashPrices.length ? [cashPrices.reduce((a, b) => a < b ? a : b), cashPrices.reduce((a, b) => a > b ? a : b)] : null };
-  });
+    const prices = comPrices.length ? comPrices : cashPrices;
+    if (prices.length === 0) continue;
 
-  const aiText = await anthropicCall({
-    max_tokens: 1500,
-    cacheSystemPrompt: true,
-    system: `You are a healthcare pricing expert with precise knowledge of Manhattan hospital negotiated rates for 2024-2025. Return ONLY valid JSON.`,
-    messages: [{ role: "user", content: `Estimate typical Manhattan hospital price ranges for these procedures:\n${items.map((it) => `${it.index}: CPT ${it.cptCode} — ${it.procedureName}`).join("\n")}\n\nReturn JSON array:\n[{"index":0,"estimatedCommercialLow":<int USD>,"estimatedCommercialHigh":<int USD>,"estimatedCashLow":<int USD>,"estimatedCashHigh":<int USD>}]\n\nUse realistic 2024-2025 Manhattan commercial negotiated rates (full episode of care).` }],
-  });
+    const realLow = prices.reduce((a, b) => a < b ? a : b);
+    const realHigh = prices.reduce((a, b) => a > b ? a : b);
+    const realMid = (realLow + realHigh) / 2;
+    const expectedMid = (expectedLow + expectedHigh) / 2;
 
-  const match = aiText.match(/\[[\s\S]*\]/);
-  if (!match) return [];
+    // "accurate" = within the expected commercial multiplier range
+    const withinRange = realMid >= expectedLow && realMid <= expectedHigh;
+    // errorPct: distance from the nearest boundary of the expected range, as % of the expected midpoint
+    let errorPct: number;
+    if (withinRange) {
+      errorPct = 0;
+    } else if (realMid < expectedLow) {
+      errorPct = expectedMid > 0 ? Math.round(((expectedLow - realMid) / expectedMid) * 100) : 100;
+    } else {
+      errorPct = expectedMid > 0 ? Math.round(((realMid - expectedHigh) / expectedMid) * 100) : 100;
+    }
 
-  const estimates: Array<{ index: number; estimatedCommercialLow: number; estimatedCommercialHigh: number; estimatedCashLow: number; estimatedCashHigh: number }> = JSON.parse(match[0]);
+    results.push({
+      cptCode: code,
+      procedureName: rs[0].procedureName,
+      realPriceLow: Math.round(realLow),
+      realPriceHigh: Math.round(realHigh),
+      medicareBenchmarkLow: Math.round(expectedLow),
+      medicareBenchmarkHigh: Math.round(expectedHigh),
+      errorPct,
+      accurate: withinRange,
+    });
+  }
 
-  return estimates.flatMap((est): ValidationSample[] => {
-    const item = items[est.index];
-    if (!item) return [];
-    const realRange = item.realCommercial ?? item.realCash;
-    if (!realRange) return [];
-    const aiLow = item.realCommercial ? est.estimatedCommercialLow : est.estimatedCashLow;
-    const aiHigh = item.realCommercial ? est.estimatedCommercialHigh : est.estimatedCashHigh;
-    const realMid = (realRange[0] + realRange[1]) / 2;
-    const aiMid = (aiLow + aiHigh) / 2;
-    const errorPct = realMid > 0 ? Math.round(Math.abs(realMid - aiMid) / realMid * 100) : 100;
-    return [{ cptCode: item.cptCode, procedureName: item.procedureName, realPriceLow: Math.round(realRange[0]), realPriceHigh: Math.round(realRange[1]), aiEstimateLow: Math.round(aiLow), aiEstimateHigh: Math.round(aiHigh), errorPct, accurate: errorPct <= 30 }];
-  });
+  return results;
 }
 
 // ── POST /api/validate ────────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     where,
     include: {
       hospital: {
-        select: { id: true, name: true, address: true },
+        select: { id: true, name: true, address: true, lastSeeded: true, sourceFile: true },
       },
     },
     orderBy: { priceInCents: "asc" },
@@ -38,11 +38,14 @@ export async function GET(request: Request) {
 
   const data = entries.map((e) => ({
     id: e.id,
-    hospital: e.hospital,
+    hospital: { id: e.hospital.id, name: e.hospital.name, address: e.hospital.address },
     payerName: e.payerName,
     payerType: e.payerType,
     priceUsd: e.priceInCents / 100,
     priceType: e.priceType,
+    source: e.source,
+    dataLastUpdated: e.hospital.lastSeeded?.toISOString() ?? null,
+    hospitalSourceFile: e.hospital.sourceFile ?? null,
   }));
 
   return NextResponse.json(data, {

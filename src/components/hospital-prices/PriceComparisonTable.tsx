@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, ShieldCheck, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PriceApiEntry } from "@/lib/price-transparency/types";
 
@@ -10,6 +10,13 @@ const fmt = new Intl.NumberFormat("en-US", {
   currency: "USD",
   maximumFractionDigits: 0,
 });
+
+const SOURCE_BADGE: Record<string, { label: string; icon: typeof ShieldCheck; className: string }> = {
+  mrf:     { label: "Hospital published",  icon: ShieldCheck, className: "text-emerald-600 bg-emerald-50" },
+  cms:     { label: "CMS data",            icon: Info,        className: "text-blue-600 bg-blue-50" },
+  upload:  { label: "Uploaded",            icon: Info,        className: "text-violet-600 bg-violet-50" },
+  dolthub: { label: "DoltHub open data",   icon: Info,        className: "text-amber-600 bg-amber-50" },
+};
 
 const PRICE_TYPE_BADGE: Record<string, string> = {
   gross: "bg-neutral-100 text-neutral-600",
@@ -78,7 +85,7 @@ export function PriceComparisonTable({
           <thead>
             <tr className="border-b border-neutral-200 bg-neutral-50">
               {showCheckboxes && <th className="w-8 px-3 py-3" />}
-              {["Hospital", "Payer", "Price", "Type"].map((h) => (
+              {["Hospital", "Payer", "Price", "Type", "Source"].map((h) => (
                 <th key={h} className="px-4 py-3 text-left font-medium text-neutral-500">
                   {h}
                 </th>
@@ -89,7 +96,7 @@ export function PriceComparisonTable({
             {Array.from({ length: 6 }).map((_, i) => (
               <tr key={i} className="border-b border-neutral-100">
                 {showCheckboxes && <td className="px-3 py-3" />}
-                {[200, 160, 80, 60].map((w, j) => (
+                {[200, 160, 80, 60, 100].map((w, j) => (
                   <td key={j} className="px-4 py-3">
                     <div
                       className="h-4 animate-pulse rounded bg-neutral-100"
@@ -136,6 +143,7 @@ export function PriceComparisonTable({
               <Th onClick={() => toggleSort("priceType")}>
                 Type <SortIcon col="priceType" />
               </Th>
+              <Th>Source</Th>
             </tr>
           </thead>
           <tbody>
@@ -182,6 +190,24 @@ export function PriceComparisonTable({
                     >
                       {entry.priceType}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex flex-col gap-0.5">
+                      {entry.source && (() => {
+                        const badge = SOURCE_BADGE[entry.source] ?? SOURCE_BADGE.mrf;
+                        const Icon = badge.icon;
+                        return (
+                          <span className={cn("shrink-0 inline-flex items-center gap-1 text-[10px] font-medium rounded px-1.5 py-0.5 w-fit", badge.className)}>
+                            <Icon className="size-2.5" /> {badge.label}
+                          </span>
+                        );
+                      })()}
+                      {entry.dataLastUpdated && (
+                        <span className="text-[10px] text-neutral-300">
+                          {new Date(entry.dataLastUpdated).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                        </span>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

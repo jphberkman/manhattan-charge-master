@@ -235,7 +235,7 @@ export default function ValidatePage() {
                         <tr className="border-b border-neutral-100">
                           <th className="px-5 py-2.5 text-left text-xs font-semibold text-neutral-500">Procedure</th>
                           <th className="px-4 py-2.5 text-right text-xs font-semibold text-neutral-500">Real price (your data)</th>
-                          <th className="px-4 py-2.5 text-right text-xs font-semibold text-neutral-500">AI estimate</th>
+                          <th className="px-4 py-2.5 text-right text-xs font-semibold text-neutral-500">Medicare benchmark range</th>
                           <th className="px-4 py-2.5 text-center text-xs font-semibold text-neutral-500">Accuracy</th>
                         </tr>
                       </thead>
@@ -244,9 +244,9 @@ export default function ValidatePage() {
                           .sort((a, b) => a.errorPct - b.errorPct)
                           .map((sample) => {
                             const acc = sampleAccuracy(sample);
-                            const aiMid = (sample.aiEstimateLow + sample.aiEstimateHigh) / 2;
+                            const benchMid = (sample.medicareBenchmarkLow + sample.medicareBenchmarkHigh) / 2;
                             const realMid = (sample.realPriceLow + sample.realPriceHigh) / 2;
-                            const overUnder = aiMid > realMid ? "over" : "under";
+                            const overUnder = realMid > benchMid ? "above" : "below";
                             return (
                               <tr key={sample.cptCode} className={cn(
                                 "transition-colors hover:bg-neutral-50",
@@ -261,7 +261,7 @@ export default function ValidatePage() {
                                   {fmtRange(sample.realPriceLow, sample.realPriceHigh)}
                                 </td>
                                 <td className="px-4 py-3 text-right font-mono text-sm text-neutral-500">
-                                  {fmtRange(sample.aiEstimateLow, sample.aiEstimateHigh)}
+                                  {fmtRange(sample.medicareBenchmarkLow, sample.medicareBenchmarkHigh)}
                                 </td>
                                 <td className="px-4 py-3">
                                   <div className="flex flex-col items-center gap-1">
@@ -278,10 +278,10 @@ export default function ValidatePage() {
                                         <XCircle className="size-3" /> {sample.errorPct}% off
                                       </span>
                                     )}
-                                    <span className={cn("flex items-center gap-0.5 text-xs", overUnder === "over" ? "text-red-500" : "text-blue-500")}>
-                                      {overUnder === "over"
-                                        ? <><TrendingUp className="size-3" /> AI overestimates</>
-                                        : <><TrendingDown className="size-3" /> AI underestimates</>
+                                    <span className={cn("flex items-center gap-0.5 text-xs", overUnder === "above" ? "text-red-500" : "text-blue-500")}>
+                                      {overUnder === "above"
+                                        ? <><TrendingUp className="size-3" /> Above expected range</>
+                                        : <><TrendingDown className="size-3" /> Below expected range</>
                                       }
                                     </span>
                                   </div>
