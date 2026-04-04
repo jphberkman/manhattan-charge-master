@@ -10,6 +10,11 @@ const SITE_GATED_PATHS = [
   "/api/physicians",
   "/api/procedure-breakdown",
   "/api/upload",
+  "/api/procedure-search",
+  "/api/procedures",
+  "/api/concern-explore",
+  "/api/admin",
+  "/api/validate",
 ];
 
 export async function middleware(request: NextRequest) {

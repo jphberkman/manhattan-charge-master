@@ -2,9 +2,33 @@
 
 import { useEditMode } from "@/lib/contexts/edit-mode-context";
 import { Pencil, X } from "lucide-react";
+import { useEffect, useState } from "react";
+
+function isAdminCookieSet(): boolean {
+  return document.cookie.split(";").some((c) => c.trim().startsWith("admin-mode=true"));
+}
 
 export function EditModeToggle() {
   const { editMode, toggleEditMode } = useEditMode();
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    // If ?admin=true is in the URL, set the admin cookie
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("admin") === "true") {
+      document.cookie = "admin-mode=true; path=/; max-age=86400; SameSite=Lax";
+      setIsAdmin(true);
+      // Clean the URL so the param isn't visible / shareable
+      params.delete("admin");
+      const clean = params.toString();
+      const newUrl = window.location.pathname + (clean ? `?${clean}` : "") + window.location.hash;
+      window.history.replaceState({}, "", newUrl);
+    } else {
+      setIsAdmin(isAdminCookieSet());
+    }
+  }, []);
+
+  if (!isAdmin) return null;
 
   return (
     <>

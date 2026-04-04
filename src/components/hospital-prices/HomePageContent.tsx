@@ -19,7 +19,7 @@ export function HomePageContent() {
   return (
     <div>
       {/* -- Hero -- */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950">
+      <section className="relative overflow-hidden" style={{ background: "linear-gradient(135deg, #2d0606 0%, #3b0a50 50%, #0a0820 100%)" }}>
         {/* Subtle grid pattern */}
         <div
           className="pointer-events-none absolute inset-0 opacity-[0.03]"
@@ -63,7 +63,7 @@ export function HomePageContent() {
             contentKey="home.hero.subheadline"
             defaultValue="Compare real hospital prices from federally mandated transparency files. No AI estimates — just real data."
             as="p"
-            className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-slate-400"
+            className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-white/50"
             multiline
           />
 
@@ -88,38 +88,38 @@ export function HomePageContent() {
       </section>
 
       {/* -- Trust section -- */}
-      <section className="border-b border-gray-100 bg-white py-16">
+      <section className="border-b border-white/10 py-16" style={{ background: "linear-gradient(135deg, #2d0606 0%, #3b0a50 50%, #0a0820 100%)" }}>
         <div className="mx-auto max-w-5xl px-4 sm:px-6">
           <EditableText
             contentKey="home.trust.label"
             defaultValue="Why trust our data"
             as="p"
-            className="text-center text-xs font-semibold uppercase tracking-widest text-gray-400"
+            className="text-center text-xs font-semibold uppercase tracking-widest text-white/30"
           />
           <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <TrustCard
-              icon={<Database className="size-5 text-violet-600" />}
+              icon={<Database className="size-5 text-violet-300" />}
               titleKey="home.trust.realdata.title"
               titleDefault="Real hospital data"
               bodyKey="home.trust.realdata.body"
               bodyDefault="All prices come from hospital chargemaster files required by federal law."
             />
             <TrustCard
-              icon={<Brain className="size-5 text-violet-600" />}
+              icon={<Brain className="size-5 text-violet-300" />}
               titleKey="home.trust.notai.title"
               titleDefault="Not AI-generated"
               bodyKey="home.trust.notai.body"
               bodyDefault="We never fabricate or estimate prices. If data is missing, we tell you."
             />
             <TrustCard
-              icon={<Building2 className="size-5 text-violet-600" />}
+              icon={<Building2 className="size-5 text-violet-300" />}
               titleKey="home.trust.entries.title"
               titleDefault="44M+ price entries"
               bodyKey="home.trust.entries.body"
               bodyDefault="Covering 10 Manhattan hospitals with comprehensive procedure data."
             />
             <TrustCard
-              icon={<HeartPulse className="size-5 text-violet-600" />}
+              icon={<HeartPulse className="size-5 text-violet-300" />}
               titleKey="home.trust.insurance.title"
               titleDefault="Your insurance, your cost"
               bodyKey="home.trust.insurance.body"
@@ -130,25 +130,25 @@ export function HomePageContent() {
       </section>
 
       {/* -- How it works -- */}
-      <section className="py-16">
+      <section className="py-16" style={{ background: "#0a0820" }}>
         <div className="mx-auto max-w-4xl px-4 sm:px-6">
           <EditableText
             contentKey="home.howitworks.title"
             defaultValue="How it works"
             as="h2"
-            className="text-center text-2xl font-bold tracking-tight text-gray-900"
+            className="text-center text-2xl font-bold tracking-tight text-white"
           />
           <EditableText
             contentKey="home.howitworks.subtitle"
             defaultValue="Three simple steps to find the best price for your procedure."
             as="p"
-            className="mx-auto mt-3 max-w-lg text-center text-sm text-gray-500"
+            className="mx-auto mt-3 max-w-lg text-center text-sm text-white/50"
           />
 
           <div className="mt-10 grid gap-6 sm:grid-cols-3">
             <StepCard
               step="1"
-              icon={<Search className="size-5 text-violet-600" />}
+              icon={<Search className="size-5 text-violet-300" />}
               titleKey="home.step1.title"
               titleDefault="Search"
               bodyKey="home.step1.body"
@@ -156,7 +156,7 @@ export function HomePageContent() {
             />
             <StepCard
               step="2"
-              icon={<ShieldCheck className="size-5 text-violet-600" />}
+              icon={<ShieldCheck className="size-5 text-violet-300" />}
               titleKey="home.step2.title"
               titleDefault="Compare"
               bodyKey="home.step2.body"
@@ -164,7 +164,7 @@ export function HomePageContent() {
             />
             <StepCard
               step="3"
-              icon={<CheckCircle2 className="size-5 text-violet-600" />}
+              icon={<CheckCircle2 className="size-5 text-violet-300" />}
               titleKey="home.step3.title"
               titleDefault="Save"
               bodyKey="home.step3.body"
@@ -175,23 +175,23 @@ export function HomePageContent() {
       </section>
 
       {/* -- Data transparency -- */}
-      <section className="border-t border-gray-100 bg-white py-16">
+      <section className="border-t border-white/10 py-16" style={{ background: "linear-gradient(135deg, #2d0606 0%, #3b0a50 50%, #0a0820 100%)" }}>
         <div className="mx-auto max-w-4xl px-4 sm:px-6">
           <EditableText
             contentKey="home.datasource.title"
             defaultValue="Where does our data come from?"
             as="h2"
-            className="text-center text-2xl font-bold tracking-tight text-gray-900"
+            className="text-center text-2xl font-bold tracking-tight text-white"
           />
           <EditableText
             contentKey="home.datasource.subtitle"
             defaultValue="Every price comes from publicly available files that hospitals are legally required to publish under the Hospital Price Transparency Rule."
             as="p"
-            className="mx-auto mt-3 max-w-lg text-center text-sm text-gray-500"
+            className="mx-auto mt-3 max-w-lg text-center text-sm text-white/50"
             multiline
           />
 
-          <div className="mt-8 rounded-xl border border-gray-100 bg-slate-50 p-6">
+          <div className="mt-8 rounded-xl border border-white/20 bg-white/10 p-6 backdrop-blur-sm">
             <ul className="space-y-3">
               {[
                 "NYU Langone Health",
@@ -207,9 +207,9 @@ export function HomePageContent() {
               ].map((name) => (
                 <li
                   key={name}
-                  className="flex items-center gap-2 text-sm text-gray-700"
+                  className="flex items-center gap-2 text-sm text-white/70"
                 >
-                  <Building2 className="size-3.5 text-gray-400" />
+                  <Building2 className="size-3.5 text-white/30" />
                   {name}
                 </li>
               ))}
@@ -219,7 +219,7 @@ export function HomePageContent() {
           <div className="mt-6 text-center">
             <Link
               href="/hospital-prices/about"
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-violet-600 hover:text-violet-500"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-violet-400 hover:text-violet-300"
             >
               Learn about our data sources
               <ArrowRight className="size-3.5" />
@@ -247,21 +247,21 @@ function TrustCard({
   bodyDefault: string;
 }) {
   return (
-    <div className="rounded-xl border border-gray-100 bg-slate-50 p-5">
-      <div className="mb-3 inline-flex rounded-lg border border-violet-100 bg-violet-50 p-2">
+    <div className="rounded-xl border border-white/20 bg-white/10 p-5 backdrop-blur-sm">
+      <div className="mb-3 inline-flex rounded-lg border border-violet-400/30 bg-violet-500/20 p-2">
         {icon}
       </div>
       <EditableText
         contentKey={titleKey}
         defaultValue={titleDefault}
         as="p"
-        className="font-semibold text-gray-900"
+        className="font-semibold text-white"
       />
       <EditableText
         contentKey={bodyKey}
         defaultValue={bodyDefault}
         as="p"
-        className="mt-1.5 text-sm leading-relaxed text-gray-500"
+        className="mt-1.5 text-sm leading-relaxed text-white/50"
         multiline
       />
     </div>
@@ -284,9 +284,9 @@ function StepCard({
   bodyDefault: string;
 }) {
   return (
-    <div className="relative rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+    <div className="relative rounded-xl border border-white/20 bg-white/10 p-6 backdrop-blur-sm">
       <div className="mb-4 flex items-center gap-3">
-        <span className="flex size-8 items-center justify-center rounded-full bg-violet-100 text-sm font-bold text-violet-700">
+        <span className="flex size-8 items-center justify-center rounded-full bg-violet-600/30 text-sm font-bold text-violet-300">
           {step}
         </span>
         {icon}
@@ -295,13 +295,13 @@ function StepCard({
         contentKey={titleKey}
         defaultValue={titleDefault}
         as="p"
-        className="text-lg font-semibold text-gray-900"
+        className="text-lg font-semibold text-white"
       />
       <EditableText
         contentKey={bodyKey}
         defaultValue={bodyDefault}
         as="p"
-        className="mt-2 text-sm leading-relaxed text-gray-500"
+        className="mt-2 text-sm leading-relaxed text-white/50"
         multiline
       />
     </div>

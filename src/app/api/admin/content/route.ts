@@ -11,8 +11,13 @@ export async function GET() {
   return NextResponse.json(map);
 }
 
-/** PUT — upsert a single content entry */
+/** PUT — upsert a single content entry (admin only) */
 export async function PUT(req: NextRequest) {
+  const adminCookie = req.cookies.get("admin-mode");
+  if (adminCookie?.value !== "true") {
+    return NextResponse.json({ error: "Admin access required" }, { status: 403 });
+  }
+
   const { key, value } = (await req.json()) as {
     key: string;
     value: string;

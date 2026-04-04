@@ -10,8 +10,8 @@ export default function AboutPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
       <div className="flex items-center gap-2">
-        <Info className="size-5 text-violet-600" />
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+        <Info className="size-5 text-violet-400" />
+        <h1 className="text-2xl font-bold tracking-tight text-white">
           About Our Data
         </h1>
       </div>
@@ -19,7 +19,7 @@ export default function AboutPage() {
       <div className="mt-8 space-y-8">
         {/* Where data comes from */}
         <Section
-          icon={<Database className="size-5 text-violet-600" />}
+          icon={<Database className="size-5 text-violet-400" />}
           title="Where the data comes from"
         >
           <p>
@@ -37,7 +37,7 @@ export default function AboutPage() {
 
         {/* What AI does */}
         <Section
-          icon={<Brain className="size-5 text-violet-600" />}
+          icon={<Brain className="size-5 text-violet-400" />}
           title="How AI is used"
         >
           <p>
@@ -64,7 +64,7 @@ export default function AboutPage() {
 
         {/* Hospitals */}
         <Section
-          icon={<Building2 className="size-5 text-violet-600" />}
+          icon={<Building2 className="size-5 text-violet-400" />}
           title="Covered hospitals"
         >
           <ul className="mt-2 space-y-1.5">
@@ -80,8 +80,8 @@ export default function AboutPage() {
               "Columbia University Irving Medical Center",
               "Beth Israel Mount Sinai",
             ].map((name) => (
-              <li key={name} className="flex items-center gap-2 text-sm">
-                <Building2 className="size-3.5 text-gray-400" />
+              <li key={name} className="flex items-center gap-2 text-sm text-white/70">
+                <Building2 className="size-3.5 text-white/30" />
                 {name}
               </li>
             ))}
@@ -90,7 +90,7 @@ export default function AboutPage() {
 
         {/* Disclaimer */}
         <Section
-          icon={<ShieldAlert className="size-5 text-amber-600" />}
+          icon={<ShieldAlert className="size-5 text-amber-400" />}
           title="Disclaimer"
         >
           <p>
@@ -120,12 +120,12 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+    <div className="rounded-xl border border-white/20 bg-white/10 p-6 backdrop-blur-sm">
       <div className="mb-3 flex items-center gap-2">
         {icon}
-        <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+        <h2 className="text-lg font-semibold text-white">{title}</h2>
       </div>
-      <div className="space-y-3 text-sm leading-relaxed text-gray-600">
+      <div className="space-y-3 text-sm leading-relaxed text-white/60">
         {children}
       </div>
     </div>

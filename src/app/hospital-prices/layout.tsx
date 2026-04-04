@@ -10,7 +10,7 @@ export default function HospitalPricesLayout({
 }) {
   return (
     <EditModeProvider>
-      <div className="flex min-h-screen flex-col bg-slate-50">
+      <div className="flex min-h-screen flex-col bg-[#0a0820]">
         <EditModeToggle />
         <Navbar />
         <main className="flex-1">{children}</main>
@@ -22,13 +22,13 @@ export default function HospitalPricesLayout({
 
 function Footer() {
   return (
-    <footer className="border-t border-gray-200 bg-white">
+    <footer className="border-t border-white/10 bg-[#0a0820]">
       <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
         <div className="grid gap-8 sm:grid-cols-3">
           {/* Brand */}
           <div>
-            <p className="text-sm font-semibold text-gray-900">Shop for Care</p>
-            <p className="mt-2 text-sm leading-relaxed text-gray-500">
+            <p className="text-sm font-semibold text-white">Shop for Care</p>
+            <p className="mt-2 text-sm leading-relaxed text-white/50">
               Helping you understand hospital prices using federally mandated
               transparency data.
             </p>
@@ -36,17 +36,17 @@ function Footer() {
 
           {/* Links */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/30">
               Resources
             </p>
-            <ul className="mt-3 space-y-2 text-sm text-gray-600">
+            <ul className="mt-3 space-y-2 text-sm text-white/50">
               <li>
-                <Link href="/hospital-prices/about" className="hover:text-gray-900">
+                <Link href="/hospital-prices/about" className="hover:text-white">
                   About &amp; Methodology
                 </Link>
               </li>
               <li>
-                <Link href="/hospital-prices/explore" className="hover:text-gray-900">
+                <Link href="/hospital-prices/explore" className="hover:text-white">
                   Concern Explorer
                 </Link>
               </li>
@@ -55,10 +55,10 @@ function Footer() {
 
           {/* Disclaimer */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
+            <p className="text-xs font-semibold uppercase tracking-wider text-white/30">
               Disclaimer
             </p>
-            <p className="mt-3 text-xs leading-relaxed text-gray-400">
+            <p className="mt-3 text-xs leading-relaxed text-white/30">
               This tool provides price information from publicly available
               hospital transparency files. It is not medical advice. Actual costs
               may vary based on your specific treatment, insurance benefits, and
@@ -68,7 +68,7 @@ function Footer() {
           </div>
         </div>
 
-        <div className="mt-8 border-t border-gray-100 pt-6 text-center text-xs text-gray-400">
+        <div className="mt-8 border-t border-white/10 pt-6 text-center text-xs text-white/30">
           Data sourced from hospital price transparency files required under the
           Hospital Price Transparency Rule (CMS-1717-F2).
         </div>
