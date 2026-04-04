@@ -57,10 +57,18 @@ export function Navbar() {
           })}
         </div>
 
-        {/* Trust badge — desktop */}
-        <div className="hidden items-center gap-1.5 text-xs text-white/30 lg:flex">
-          <BadgeCheck className="size-3.5 text-emerald-400" />
-          <span>Prices from hospital transparency files</span>
+        {/* Trust badge + admin link — desktop */}
+        <div className="hidden items-center gap-3 lg:flex">
+          <div className="flex items-center gap-1.5 text-xs text-white/30">
+            <BadgeCheck className="size-3.5 text-emerald-400" />
+            <span>Prices from hospital transparency files</span>
+          </div>
+          <Link
+            href="/hospital-prices/admin"
+            className="text-[11px] text-white/20 transition-colors hover:text-white/40"
+          >
+            Admin
+          </Link>
         </div>
 
         {/* Mobile hamburger */}
@@ -95,9 +103,18 @@ export function Navbar() {
               </Link>
             );
           })}
-          <div className="mt-3 flex items-center gap-1.5 px-3 text-xs text-white/30">
-            <BadgeCheck className="size-3.5 text-emerald-400" />
-            <span>Prices from hospital transparency files</span>
+          <div className="mt-3 flex items-center justify-between px-3">
+            <div className="flex items-center gap-1.5 text-xs text-white/30">
+              <BadgeCheck className="size-3.5 text-emerald-400" />
+              <span>Prices from hospital transparency files</span>
+            </div>
+            <Link
+              href="/hospital-prices/admin"
+              onClick={() => setMobileOpen(false)}
+              className="text-[11px] text-white/20 hover:text-white/40"
+            >
+              Admin
+            </Link>
           </div>
         </div>
       )}

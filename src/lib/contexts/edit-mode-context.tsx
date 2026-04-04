@@ -1,5 +1,6 @@
 "use client";
 
+import { hasAdminCookie } from "@/lib/admin-auth";
 import {
   createContext,
   useCallback,
@@ -11,6 +12,7 @@ import {
 
 interface EditModeContextType {
   editMode: boolean;
+  isAdmin: boolean;
   toggleEditMode: () => void;
   content: Record<string, string>;
   updateContent: (key: string, value: string) => Promise<void>;
@@ -18,6 +20,7 @@ interface EditModeContextType {
 
 const EditModeContext = createContext<EditModeContextType>({
   editMode: false,
+  isAdmin: false,
   toggleEditMode: () => {},
   content: {},
   updateContent: async () => {},
@@ -25,7 +28,17 @@ const EditModeContext = createContext<EditModeContextType>({
 
 export function EditModeProvider({ children }: { children: ReactNode }) {
   const [editMode, setEditMode] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [content, setContent] = useState<Record<string, string>>({});
+
+  // Check admin cookie on mount
+  useEffect(() => {
+    const admin = hasAdminCookie();
+    setIsAdmin(admin);
+    if (admin) {
+      setEditMode(true);
+    }
+  }, []);
 
   // Fetch all content on mount
   useEffect(() => {
@@ -65,7 +78,7 @@ export function EditModeProvider({ children }: { children: ReactNode }) {
 
   return (
     <EditModeContext.Provider
-      value={{ editMode, toggleEditMode, content, updateContent }}
+      value={{ editMode, isAdmin, toggleEditMode, content, updateContent }}
     >
       {children}
     </EditModeContext.Provider>

@@ -1,3 +1,4 @@
+import { isAdminRequest } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -13,8 +14,7 @@ export async function GET() {
 
 /** PUT — upsert a single content entry (admin only) */
 export async function PUT(req: NextRequest) {
-  const adminCookie = req.cookies.get("admin-mode");
-  if (adminCookie?.value !== "true") {
+  if (!isAdminRequest(req)) {
     return NextResponse.json({ error: "Admin access required" }, { status: 403 });
   }
 
