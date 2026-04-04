@@ -379,6 +379,10 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                                 <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 bg-emerald-50 rounded px-1.5 py-0.5">
                                   <ShieldCheck className="size-2.5" /> Hospital published
                                 </span>
+                              ) : entry.dataSource === "chargemaster" && entry.insuranceRate != null ? (
+                                <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 bg-emerald-50 rounded px-1.5 py-0.5">
+                                  <ShieldCheck className="size-2.5" /> Hospital published · no cash price listed
+                                </span>
                               ) : entry.dataSource === "chargemaster" ? (
                                 <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
                                   Hospital published · no insurer rate for this procedure
