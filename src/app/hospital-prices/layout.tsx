@@ -1,4 +1,6 @@
 import { Navbar } from "@/components/hospital-prices/Navbar";
+import { EditModeProvider } from "@/lib/contexts/edit-mode-context";
+import { EditModeToggle } from "@/components/hospital-prices/EditModeToggle";
 import Link from "next/link";
 
 export default function HospitalPricesLayout({
@@ -7,11 +9,14 @@ export default function HospitalPricesLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50">
-      <Navbar />
-      <main className="flex-1">{children}</main>
-      <Footer />
-    </div>
+    <EditModeProvider>
+      <div className="flex min-h-screen flex-col bg-slate-50">
+        <EditModeToggle />
+        <Navbar />
+        <main className="flex-1">{children}</main>
+        <Footer />
+      </div>
+    </EditModeProvider>
   );
 }
 
@@ -38,11 +43,6 @@ function Footer() {
               <li>
                 <Link href="/hospital-prices/about" className="hover:text-gray-900">
                   About &amp; Methodology
-                </Link>
-              </li>
-              <li>
-                <Link href="/hospital-prices/audit" className="hover:text-gray-900">
-                  Data Quality
                 </Link>
               </li>
               <li>

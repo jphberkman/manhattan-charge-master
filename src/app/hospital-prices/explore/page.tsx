@@ -81,19 +81,19 @@ export default function ConcernExplorePage() {
   };
 
   const AiBadge = () => (
-    <span className="inline-flex items-center gap-1 rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold text-teal-700">
+    <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold text-violet-700">
       <Sparkles className="size-2.5" /> AI-generated
     </span>
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-teal-50/50 to-white">
+    <div className="min-h-screen bg-gradient-to-b from-violet-50/50 to-white">
       <div className="mx-auto max-w-3xl px-4 py-8 sm:py-12">
 
         {/* Header */}
         <div className="text-center mb-6">
           <div className="flex items-center justify-center gap-2 mb-3">
-            <Brain className="size-7 text-teal-600" />
+            <Brain className="size-7 text-violet-600" />
             <h1 className="text-3xl font-black text-neutral-900">Concern Explorer</h1>
           </div>
           <p className="text-neutral-500 text-sm max-w-lg mx-auto">
@@ -120,11 +120,11 @@ export default function ConcernExplorePage() {
         <div className={cn(
           "flex items-center gap-3 rounded-2xl border-2 bg-white px-5 py-4 shadow-md transition-all",
           loading
-            ? "border-teal-400 ring-4 ring-teal-100"
-            : "border-gray-200 focus-within:border-teal-400 focus-within:ring-4 focus-within:ring-teal-100 hover:border-teal-300",
+            ? "border-violet-400 ring-4 ring-violet-100"
+            : "border-gray-200 focus-within:border-violet-400 focus-within:ring-4 focus-within:ring-violet-100 hover:border-violet-300",
         )}>
           {loading
-            ? <Loader2 className="size-5 shrink-0 animate-spin text-teal-500" />
+            ? <Loader2 className="size-5 shrink-0 animate-spin text-violet-500" />
             : <Search className="size-5 shrink-0 text-gray-400" />
           }
           <input
@@ -140,7 +140,7 @@ export default function ConcernExplorePage() {
           <button
             onClick={() => search(query)}
             disabled={loading || !query.trim()}
-            className="shrink-0 rounded-xl bg-teal-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-40"
+            className="shrink-0 rounded-xl bg-violet-600 px-5 py-2 text-sm font-semibold text-white shadow-sm transition-all hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {loading ? "Searching..." : "Explore"}
           </button>
@@ -153,7 +153,7 @@ export default function ConcernExplorePage() {
               <button
                 key={s.label}
                 onClick={() => { setQuery(s.query); search(s.query); }}
-                className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-all hover:border-teal-300 hover:bg-teal-50 hover:text-teal-700"
+                className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm transition-all hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
               >
                 {s.label}
               </button>
@@ -166,7 +166,7 @@ export default function ConcernExplorePage() {
           <div className="mt-8 text-center">
             <Link
               href="/hospital-prices"
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-teal-600 hover:text-teal-500"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-violet-600 hover:text-violet-500"
             >
               Search for procedure pricing instead
               <ArrowRight className="size-3.5" />
@@ -205,8 +205,8 @@ export default function ConcernExplorePage() {
             <section className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">
-                  <div className="flex size-8 items-center justify-center rounded-lg bg-teal-100">
-                    <Stethoscope className="size-4 text-teal-600" />
+                  <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100">
+                    <Stethoscope className="size-4 text-violet-600" />
                   </div>
                   <h2 className="text-base font-bold text-neutral-900">What is this condition?</h2>
                 </div>
@@ -219,8 +219,8 @@ export default function ConcernExplorePage() {
             <section className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">
-                  <div className="flex size-8 items-center justify-center rounded-lg bg-teal-100">
-                    <ClipboardList className="size-4 text-teal-600" />
+                  <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100">
+                    <ClipboardList className="size-4 text-violet-600" />
                   </div>
                   <h2 className="text-base font-bold text-neutral-900">Common causes</h2>
                 </div>
@@ -229,7 +229,7 @@ export default function ConcernExplorePage() {
               <ul className="space-y-2">
                 {result.causes.map((cause, i) => (
                   <li key={i} className="flex items-start gap-2.5 text-sm text-neutral-700">
-                    <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-teal-400" />
+                    <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-violet-400" />
                     {cause}
                   </li>
                 ))}
@@ -240,8 +240,8 @@ export default function ConcernExplorePage() {
             <section className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-4">
                 <div className="flex items-center gap-2">
-                  <div className="flex size-8 items-center justify-center rounded-lg bg-teal-100">
-                    <Heart className="size-4 text-teal-600" />
+                  <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100">
+                    <Heart className="size-4 text-violet-600" />
                   </div>
                   <h2 className="text-base font-bold text-neutral-900">Common treatment options</h2>
                 </div>
@@ -296,8 +296,8 @@ export default function ConcernExplorePage() {
             <section className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">
-                  <div className="flex size-8 items-center justify-center rounded-lg bg-teal-100">
-                    <HelpCircle className="size-4 text-teal-600" />
+                  <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100">
+                    <HelpCircle className="size-4 text-violet-600" />
                   </div>
                   <h2 className="text-base font-bold text-neutral-900">Questions to ask your doctor</h2>
                 </div>
@@ -306,7 +306,7 @@ export default function ConcernExplorePage() {
               <ul className="space-y-2.5">
                 {result.questionsForDoctor.map((q, i) => (
                   <li key={i} className="flex items-start gap-2.5 text-sm text-neutral-700">
-                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-teal-100 text-[10px] font-bold text-teal-700">
+                    <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-violet-100 text-[10px] font-bold text-violet-700">
                       {i + 1}
                     </span>
                     {q}
@@ -320,8 +320,8 @@ export default function ConcernExplorePage() {
               <section className="rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <div className="flex items-center gap-2">
-                    <div className="flex size-8 items-center justify-center rounded-lg bg-teal-100">
-                      <Search className="size-4 text-teal-600" />
+                    <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100">
+                      <Search className="size-4 text-violet-600" />
                     </div>
                     <h2 className="text-base font-bold text-neutral-900">Look up real hospital prices</h2>
                   </div>
@@ -335,10 +335,10 @@ export default function ConcernExplorePage() {
                     <Link
                       key={i}
                       href={`/hospital-prices?q=${encodeURIComponent(proc.searchQuery)}`}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 transition-all hover:border-teal-300 hover:bg-teal-50"
+                      className="flex items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-3 transition-all hover:border-violet-300 hover:bg-violet-50"
                     >
                       <span className="text-sm font-medium text-neutral-800">{proc.name}</span>
-                      <ArrowRight className="size-4 shrink-0 text-teal-500" />
+                      <ArrowRight className="size-4 shrink-0 text-violet-500" />
                     </Link>
                   ))}
                 </div>
@@ -360,7 +360,7 @@ export default function ConcernExplorePage() {
             <div className="text-center">
               <button
                 onClick={() => { setResult(null); setQuery(""); inputRef.current?.focus(); }}
-                className="rounded-xl border border-neutral-200 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-600 shadow-sm transition-all hover:border-teal-300 hover:text-teal-700"
+                className="rounded-xl border border-neutral-200 bg-white px-5 py-2.5 text-sm font-semibold text-neutral-600 shadow-sm transition-all hover:border-violet-300 hover:text-violet-700"
               >
                 Explore another concern
               </button>

@@ -8,7 +8,6 @@ import {
   Search,
   Compass,
   Info,
-  ShieldCheck,
   Menu,
   X,
   BadgeCheck,
@@ -18,7 +17,6 @@ const navLinks = [
   { href: "/hospital-prices/search", label: "Search", icon: Search },
   { href: "/hospital-prices/explore", label: "Concern Explorer", icon: Compass },
   { href: "/hospital-prices/about", label: "About", icon: Info },
-  { href: "/hospital-prices/audit", label: "Data Quality", icon: ShieldCheck },
 ] as const;
 
 export function Navbar() {
