@@ -19,6 +19,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { EditableText } from "@/components/hospital-prices/EditableText";
 import type { ConcernExploreResponse } from "@/app/api/concern-explore/route";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -94,11 +95,20 @@ export default function ConcernExplorePage() {
         <div className="text-center mb-6">
           <div className="flex items-center justify-center gap-2 mb-3">
             <Brain className="size-7 text-violet-400" />
-            <h1 className="text-3xl font-black text-white">Concern Explorer</h1>
+            <EditableText
+              contentKey="explore.header.title"
+              defaultValue="Concern Explorer"
+              as="h1"
+              className="text-3xl font-black text-white"
+            />
           </div>
-          <p className="text-white/50 text-sm max-w-lg mx-auto">
-            Learn about health conditions, treatment options, and what to ask your doctor
-          </p>
+          <EditableText
+            contentKey="explore.header.subtitle"
+            defaultValue="Learn about health conditions, treatment options, and what to ask your doctor"
+            as="p"
+            className="text-white/50 text-sm max-w-lg mx-auto"
+            multiline
+          />
         </div>
 
         {/* Disclaimer -- top */}
@@ -107,11 +117,13 @@ export default function ConcernExplorePage() {
             <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-400" />
             <div>
               <p className="text-sm font-semibold text-amber-300">Educational content only</p>
-              <p className="text-xs text-amber-300/70 mt-0.5 leading-relaxed">
-                This content is AI-generated for educational purposes only. It is not medical advice,
-                diagnosis, or treatment recommendation. Always consult your healthcare provider for
-                medical decisions.
-              </p>
+              <EditableText
+                contentKey="explore.disclaimer"
+                defaultValue="This content is AI-generated for educational purposes only. It is not medical advice, diagnosis, or treatment recommendation. Always consult your healthcare provider for medical decisions."
+                as="p"
+                className="text-xs text-amber-300/70 mt-0.5 leading-relaxed"
+                multiline
+              />
             </div>
           </div>
         </div>

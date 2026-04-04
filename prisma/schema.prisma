@@ -175,6 +175,19 @@ model SiteContent {
   updatedBy String   @default("")  // who edited it
 }
 
+/// Tracks every content edit for audit trail and revert capability.
+model ContentHistory {
+  id         String   @id @default(cuid())
+  key        String                // which content key was changed
+  oldValue   String               // previous value
+  newValue   String               // new value
+  changedAt  DateTime @default(now())
+  changedBy  String   @default("admin")
+
+  @@index([key])
+  @@index([changedAt])
+}
+
 /// NUBC Revenue Codes — maps 4-digit facility charge categories to CPT procedures.
 /// Hospitals often list facility fees by revenue code (e.g. 0360 = Operating Room)
 /// rather than CPT code. This table links them for price aggregation.

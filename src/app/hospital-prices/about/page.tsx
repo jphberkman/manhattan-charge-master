@@ -1,4 +1,5 @@
 import { Info, Database, Brain, ShieldAlert, Building2 } from "lucide-react";
+import { AboutIntro } from "@/components/hospital-prices/AboutIntro";
 
 export const metadata = {
   title: "About Our Data — Shop for Care",
@@ -22,15 +23,9 @@ export default function AboutPage() {
           icon={<Database className="size-5 text-violet-400" />}
           title="Where the data comes from"
         >
+          <AboutIntro />
           <p>
-            Every price on this site comes from publicly available machine-readable
-            files that hospitals are legally required to publish under the{" "}
-            <strong>Hospital Price Transparency Rule</strong> (CMS-1717-F2),
-            which took effect January 1, 2021.
-          </p>
-          <p>
-            We collect, parse, and normalize these files from 10 Manhattan
-            hospitals. Each file contains chargemaster rates, cash/self-pay
+            Each file contains chargemaster rates, cash/self-pay
             prices, and negotiated rates for specific insurance plans.
           </p>
         </Section>
