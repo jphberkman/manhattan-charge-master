@@ -1,167 +1,241 @@
-import { HospitalPricesClient } from "@/components/hospital-prices/HospitalPricesClient";
-import { Search, TrendingDown, ShieldCheck, Activity, Lock } from "lucide-react";
+import Link from "next/link";
+import {
+  Search,
+  Compass,
+  ShieldCheck,
+  Database,
+  Brain,
+  HeartPulse,
+  ArrowRight,
+  Building2,
+  CheckCircle2,
+  BadgeCheck,
+} from "lucide-react";
 
 export const metadata = {
-  title: "Manhattan Medical Marketplace",
+  title: "Shop for Care — Know What You'll Pay Before You Go",
   description:
-    "Find the true cost of any procedure at Manhattan hospitals. Compare insurance rates and cash prices — before you go.",
+    "Compare real hospital prices from federally mandated transparency files. No AI estimates — just real data from Manhattan hospitals.",
 };
 
 export default function HospitalPricesPage() {
-  // No DB queries on page load — prices are fetched client-side on demand.
-  // This makes the page load instantly instead of waiting 10-15s for Neon to wake up.
-  const priceCount = "30,000+";
-
   return (
-    <main className="min-h-screen bg-white">
-
+    <div>
       {/* ── Hero ── */}
-      <div
-        className="relative overflow-hidden"
-        style={{ background: "linear-gradient(135deg, #2d0606 0%, #3b0a50 50%, #0a0820 100%)" }}
-      >
-
-        {/* Subtle plus / cross background pattern — medical feel */}
+      <section className="relative overflow-hidden bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950">
+        {/* Subtle grid pattern */}
         <div
-          className="pointer-events-none absolute inset-0 opacity-[0.04]"
+          className="pointer-events-none absolute inset-0 opacity-[0.03]"
           style={{
-            backgroundImage: `url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23ffffff' fill-rule='evenodd'%3E%3Crect x='17' y='8' width='6' height='24'/%3E%3Crect x='8' y='17' width='24' height='6'/%3E%3C/g%3E%3C/svg%3E")`,
-            backgroundSize: "40px 40px",
+            backgroundImage:
+              "radial-gradient(circle, #fff 1px, transparent 1px)",
+            backgroundSize: "24px 24px",
           }}
         />
+        {/* Accent glow */}
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_60%_50%_at_50%_0%,rgba(124,58,237,0.15),transparent)]" />
 
-        {/* Crimson glow bottom-left */}
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(ellipse 60% 60% at 10% 80%, rgba(120,10,10,0.35) 0%, transparent 70%)",
-          }}
-        />
-
-        {/* Violet glow top-right */}
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              "radial-gradient(ellipse 60% 50% at 85% 20%, rgba(100,30,160,0.30) 0%, transparent 70%)",
-          }}
-        />
-
-        <div className="relative mx-auto max-w-4xl px-6 pb-16 pt-20 text-center sm:pt-28">
-
-          {/* Badge */}
-          <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-1.5 backdrop-blur-sm">
-            <Activity className="size-3.5 text-violet-300" strokeWidth={2.5} />
-            <span className="text-xs font-semibold tracking-wide text-white/80">
-              Real hospital prices · Manhattan · Updated 2025
+        <div className="relative mx-auto max-w-4xl px-4 pb-20 pt-24 text-center sm:px-6 sm:pt-32">
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-1.5 backdrop-blur-sm">
+            <BadgeCheck className="size-3.5 text-emerald-400" />
+            <span className="text-xs font-medium text-white/70">
+              Real prices from hospital transparency files
             </span>
           </div>
 
-          {/* Headline */}
-          <h1 className="text-[2.75rem] font-bold leading-[1.12] tracking-[-0.02em] text-white sm:text-6xl">
-            Know what you&apos;ll pay<br />
-            <span className="text-violet-300">before you go.</span>
+          <h1 className="text-4xl font-bold leading-tight tracking-tight text-white sm:text-5xl lg:text-6xl">
+            Know what you&apos;ll pay
+            <br />
+            <span className="text-violet-400">before you go</span>
           </h1>
 
-          {/* Subheadline */}
-          <p className="mx-auto mt-5 max-w-xl text-lg leading-relaxed text-white/65">
-            Compare real prices at Manhattan hospitals — with your insurance or without.
-            No surprises. No medical jargon. Just the number that matters to you.
+          <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-slate-400">
+            Compare real hospital prices from federally mandated transparency
+            files. No AI estimates&nbsp;&mdash; just real data.
           </p>
 
-          {/* Trust stats */}
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-x-8 gap-y-3">
-            <Stat value={`10+`} label="Manhattan hospitals" />
-            <Divider />
-            <Stat value={priceCount} label="price records" />
-            <Divider />
-            <Stat value="AI" label="procedure identification" />
-          </div>
-
-          {/* Compliance note */}
-          <div className="mt-8 inline-flex items-center gap-1.5 text-xs text-white/35">
-            <Lock className="size-3" />
-            Prices sourced from federally mandated hospital price transparency files
+          <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+            <Link
+              href="/hospital-prices/search"
+              className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-violet-600/25 transition hover:bg-violet-500"
+            >
+              <Search className="size-4" />
+              Search by Procedure
+              <ArrowRight className="size-4" />
+            </Link>
+            <Link
+              href="/hospital-prices/explore"
+              className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-6 py-3 text-sm font-semibold text-white backdrop-blur-sm transition hover:bg-white/10"
+            >
+              <Compass className="size-4" />
+              Explore a Health Concern
+            </Link>
           </div>
         </div>
+      </section>
 
-        {/* ECG / heartbeat decorative line */}
-        <div className="relative mx-auto max-w-5xl px-6 pb-2">
-          <svg
-            viewBox="0 0 900 60"
-            fill="none"
-            className="w-full opacity-[0.25]"
-            preserveAspectRatio="none"
-          >
-            <polyline
-              points="0,30 120,30 150,30 165,8 180,52 195,8 210,52 225,30 270,30 300,30 330,30 360,30 450,30 500,30 530,30 545,8 560,52 575,8 590,52 605,30 650,30 680,30 900,30"
-              stroke="#c4b5fd"
-              strokeWidth="2"
-              strokeLinejoin="round"
-              strokeLinecap="round"
+      {/* ── Trust section ── */}
+      <section className="border-b border-gray-100 bg-white py-16">
+        <div className="mx-auto max-w-5xl px-4 sm:px-6">
+          <p className="text-center text-xs font-semibold uppercase tracking-widest text-gray-400">
+            Why trust our data
+          </p>
+          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <TrustCard
+              icon={<Database className="size-5 text-violet-600" />}
+              title="Real hospital data"
+              body="All prices come from hospital chargemaster files required by federal law."
             />
-          </svg>
+            <TrustCard
+              icon={<Brain className="size-5 text-violet-600" />}
+              title="Not AI-generated"
+              body="We never fabricate or estimate prices. If data is missing, we tell you."
+            />
+            <TrustCard
+              icon={<Building2 className="size-5 text-violet-600" />}
+              title="44M+ price entries"
+              body="Covering 10 Manhattan hospitals with comprehensive procedure data."
+            />
+            <TrustCard
+              icon={<HeartPulse className="size-5 text-violet-600" />}
+              title="Your insurance, your cost"
+              body="Enter your plan details for accurate out-of-pocket estimates."
+            />
+          </div>
         </div>
-
-        {/* Bottom border */}
-        <div className="border-b border-white/10" />
-      </div>
+      </section>
 
       {/* ── How it works ── */}
-      <div className="bg-neutral-50 border-b border-neutral-100">
-        <div className="mx-auto max-w-5xl px-6 py-10">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <FeatureCard
-              icon={<Search className="size-4 text-violet-600" />}
-              title="Describe what you need"
-              body='Type "knee replacement" or "I have gallstones" — no medical codes needed. Our AI identifies the procedure instantly.'
+      <section className="py-16">
+        <div className="mx-auto max-w-4xl px-4 sm:px-6">
+          <h2 className="text-center text-2xl font-bold tracking-tight text-gray-900">
+            How it works
+          </h2>
+          <p className="mx-auto mt-3 max-w-lg text-center text-sm text-gray-500">
+            Three simple steps to find the best price for your procedure.
+          </p>
+
+          <div className="mt-10 grid gap-6 sm:grid-cols-3">
+            <StepCard
+              step="1"
+              icon={<Search className="size-5 text-violet-600" />}
+              title="Search"
+              body="Describe what you need in plain English. Our AI identifies the right procedure codes for you."
             />
-            <FeatureCard
-              icon={<TrendingDown className="size-4 text-violet-600" />}
-              title="See your real out-of-pocket cost"
-              body="We show what you'd pay with insurance and without — side by side — so you can choose the most affordable option."
+            <StepCard
+              step="2"
+              icon={<ShieldCheck className="size-5 text-violet-600" />}
+              title="Compare"
+              body="See real prices across hospitals — insurance negotiated rates and cash prices side by side."
             />
-            <FeatureCard
-              icon={<ShieldCheck className="size-4 text-violet-600" />}
-              title="Find the best hospital and doctor"
-              body="The same procedure can cost thousands more at one hospital. We rank all options and recommend top surgeons for each."
+            <StepCard
+              step="3"
+              icon={<CheckCircle2 className="size-5 text-violet-600" />}
+              title="Save"
+              body="Choose the best option and walk in knowing exactly what you'll pay. No surprises."
             />
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* ── Main marketplace ── */}
-      <div className="mx-auto max-w-5xl px-6 py-10 pb-20">
-        <HospitalPricesClient />
-      </div>
-    </main>
-  );
-}
+      {/* ── Data transparency ── */}
+      <section className="border-t border-gray-100 bg-white py-16">
+        <div className="mx-auto max-w-4xl px-4 sm:px-6">
+          <h2 className="text-center text-2xl font-bold tracking-tight text-gray-900">
+            Where does our data come from?
+          </h2>
+          <p className="mx-auto mt-3 max-w-lg text-center text-sm text-gray-500">
+            Every price comes from publicly available files that hospitals are
+            legally required to publish under the{" "}
+            <span className="font-medium text-gray-700">
+              Hospital Price Transparency Rule
+            </span>
+            .
+          </p>
 
-// ── Small helpers ─────────────────────────────────────────────────────────────
+          <div className="mt-8 rounded-xl border border-gray-100 bg-slate-50 p-6">
+            <ul className="space-y-3">
+              {[
+                "NYU Langone Health",
+                "Mount Sinai Hospital",
+                "NewYork-Presbyterian",
+                "Memorial Sloan Kettering",
+                "Hospital for Special Surgery",
+                "Lenox Hill Hospital",
+                "NYC Health + Hospitals / Bellevue",
+                "Weill Cornell Medical Center",
+                "Columbia University Irving Medical Center",
+                "Beth Israel Mount Sinai",
+              ].map((name) => (
+                <li
+                  key={name}
+                  className="flex items-center gap-2 text-sm text-gray-700"
+                >
+                  <Building2 className="size-3.5 text-gray-400" />
+                  {name}
+                </li>
+              ))}
+            </ul>
+          </div>
 
-function Stat({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="text-center">
-      <p className="text-2xl font-bold tracking-tight text-white">{value}</p>
-      <p className="mt-0.5 text-xs font-medium text-white/45 uppercase tracking-wide">{label}</p>
+          <div className="mt-6 text-center">
+            <Link
+              href="/hospital-prices/audit"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-violet-600 hover:text-violet-500"
+            >
+              View full data quality report
+              <ArrowRight className="size-3.5" />
+            </Link>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
 
-function Divider() {
-  return <div className="hidden h-8 w-px bg-white/20 sm:block" />;
-}
+/* ── Helper components ── */
 
-function FeatureCard({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
+function TrustCard({
+  icon,
+  title,
+  body,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  body: string;
+}) {
   return (
-    <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
-      <div className="mb-3 inline-flex rounded-xl border border-violet-100 bg-violet-50 p-2.5">
+    <div className="rounded-xl border border-gray-100 bg-slate-50 p-5">
+      <div className="mb-3 inline-flex rounded-lg border border-violet-100 bg-violet-50 p-2">
         {icon}
       </div>
       <p className="font-semibold text-gray-900">{title}</p>
       <p className="mt-1.5 text-sm leading-relaxed text-gray-500">{body}</p>
+    </div>
+  );
+}
+
+function StepCard({
+  step,
+  icon,
+  title,
+  body,
+}: {
+  step: string;
+  icon: React.ReactNode;
+  title: string;
+  body: string;
+}) {
+  return (
+    <div className="relative rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+      <div className="mb-4 flex items-center gap-3">
+        <span className="flex size-8 items-center justify-center rounded-full bg-violet-100 text-sm font-bold text-violet-700">
+          {step}
+        </span>
+        {icon}
+      </div>
+      <p className="text-lg font-semibold text-gray-900">{title}</p>
+      <p className="mt-2 text-sm leading-relaxed text-gray-500">{body}</p>
     </div>
   );
 }

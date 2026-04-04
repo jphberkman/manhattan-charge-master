@@ -16,23 +16,21 @@ export interface BreakdownComponent {
   description: string;
   cptCode: string;
   hcpcsCode?: string;
-  chargemasterLow: number;
-  chargemasterHigh: number;
+  chargemasterLow: number | null;
+  chargemasterHigh: number | null;
   insuranceLow: number | null;
   insuranceHigh: number | null;
-  cashLow: number;
-  cashHigh: number;
+  cashLow: number | null;
+  cashHigh: number | null;
   notes: string;
-  /** "real" = prices come from the chargemaster DB. "estimated" = AI estimate (no DB match). */
-  dataSource: "real" | "estimated";
+  /** "real" = prices come from the chargemaster DB. "unavailable" = no DB data for this component. */
+  dataSource: "real" | "unavailable";
 }
 
 export interface AlternativeProcedure {
   name: string;
   cptCode: string;
   approach: string;
-  estimatedCostLow: number;
-  estimatedCostHigh: number;
   typicalRecovery: string;
   pros: string;
   cons: string;
@@ -282,30 +280,22 @@ export async function POST(req: NextRequest) {
         return;
       }
 
-      // 2. Pre-load real chargemaster data BEFORE calling AI (5s timeout so a
-      //    slow Neon cold-start never blocks the full analysis).
-      //    Runs keyword search + NLM CPT lookup in parallel.
-      const { priceMap: chargemasterData, nlmHint } = await Promise.race([
+      // 2. Pre-load NLM CPT hint to improve AI's procedure identification
+      const { nlmHint } = await Promise.race([
         fetchChargemasterData(query),
         new Promise<{ priceMap: CptPriceMap; nlmHint: string | null }>(
           (resolve) => setTimeout(() => resolve({ priceMap: {}, nlmHint: null }), 5000),
         ),
       ]);
-      const chargemasterContext = buildChargemasterContext(chargemasterData);
-      const hasDbData = Object.keys(chargemasterData).length > 0;
 
-      const insurerContext = insurerName
-        ? `The patient has ${insurerName} insurance (${payerType ?? "commercial"}).`
-        : "No specific insurer selected — use typical commercial in-network estimates.";
-
-      // 3. Build AI prompt — static system prompt (enables Anthropic prompt caching),
-      //    all dynamic content (chargemaster data, insurance) goes in user message
+      // 3. Build AI prompt — AI identifies procedure, components, and CPT codes only.
+      //    It must NOT generate any dollar amounts. Prices come from DB only.
       const systemPrompt = `You are a healthcare cost transparency expert for Manhattan hospitals with deep clinical knowledge.
 
-Your job is to produce a structured JSON cost breakdown for medical procedures.
+Your job is to identify the correct procedure for a patient's query and enumerate all billable components with their CPT/HCPCS codes. You do NOT generate any prices or dollar amounts.
 
-CLINICAL REASONING PROTOCOL — before building the bill, reason through:
-1. What condition is described and what does standard of care dictate? (reference AAOS, ACS, ACC/AHA, ACOG guidelines as applicable)
+CLINICAL REASONING PROTOCOL — before listing components, reason through:
+1. What condition is described and what does standard of care dictate?
 2. What is the MOST COMMON surgical/procedural treatment path and why?
 3. What are the specific procedure steps, typical OR time, and anesthesia type?
 4. What specific implants, hardware, or devices are typically used? Be granular — not "hardware" but "titanium locking compression plate 3.5mm, 6 cortical screws (HCPCS C1713)"
@@ -313,40 +303,19 @@ CLINICAL REASONING PROTOCOL — before building the bill, reason through:
 6. Expected hospital stay: inpatient days or same-day/23-hour?
 7. Post-op rehabilitation protocol?
 
-Use this reasoning to ensure the bill includes EVERY component a patient would actually be charged for.
-
 RULES:
 1. Handle both condition descriptions (e.g. "torn ACL") and direct procedure names.
 2. For conditions, identify the most appropriate surgical procedure first (most common treatment, not the most aggressive).
-2b. For the "alternatives" array, return structured objects ONLY when genuinely different surgical approaches exist (e.g. arthroscopic vs open, robotic vs laparoscopic). Include CPT codes so users can search for detailed costs. Cost estimates should be rough Manhattan full-episode ranges. Recovery times should be realistic ranges. Return an empty array if there are no meaningful alternatives.
+2b. For the "alternatives" array, return structured objects ONLY when genuinely different surgical approaches exist. Include CPT codes so users can search for detailed costs. Recovery times should be realistic ranges. Return an empty array if there are no meaningful alternatives.
 3. For surgical procedures, list every individual implant, screw, plate, nail, anchor, and graft separately with HCPCS codes.
-4. If CHARGEMASTER DATA is provided in the user message, never fabricate prices for those CPT codes — use those exact ranges.
-5. Manhattan hospital prices are significantly higher than national averages — apply a 1.4–1.8x multiplier vs. national benchmarks.
-6. Respond with ONLY valid JSON — no markdown, no commentary.`;
-
-      const chargemasterSection = hasDbData
-        ? `REAL CHARGEMASTER DATA — use these as reference ranges for matching CPT codes.
-${chargemasterContext}
-
-IMPORTANT INTERPRETATION RULES:
-- These DB entries are often professional fee line items (surgeon only), NOT full episode prices.
-- A total knee replacement surgeon fee of $3,000–$5,000 is correct for that line item, but the
-  full episode (facility + implants + anesthesia) costs $50,000–$100,000 at Manhattan hospitals.
-- Use DB prices for the SPECIFIC component they represent (e.g. surgeon fee for that CPT).
-- Set "dataSource": "real" for components whose CPT matches the table above.
-- For all other components, use realistic full Manhattan market rates and set "dataSource": "estimated".
-- Do NOT let a low professional fee line item constrain your facility fee or implant cost estimates.`
-        : `No chargemaster database matches found for this query.
-Set "dataSource": "estimated" for all components and use realistic Manhattan market rates.`;
+4. DO NOT include any dollar amounts, price estimates, or cost figures in your response. All price fields must be null.
+5. Respond with ONLY valid JSON — no markdown, no commentary.`;
 
       const nlmContext = nlmHint ? `\nCPT CODE HINT (from NLM database): ${nlmHint}` : "";
 
-      const userPrompt = `Patient query: "${query}"
-${insurerContext}${nlmContext}
+      const userPrompt = `Patient query: "${query}"${nlmContext}
 
-${chargemasterSection}
-
-Return a complete JSON breakdown:
+Return a complete JSON breakdown (all price fields must be null — prices are populated from our database separately):
 {
   "procedureName": "Full official procedure name",
   "cptCode": "primary CPT code",
@@ -361,8 +330,6 @@ Return a complete JSON breakdown:
         "name": "Alternative procedure name",
         "cptCode": "CPT code for the alternative",
         "approach": "e.g. Arthroscopic vs Open",
-        "estimatedCostLow": <integer USD rough Manhattan lower bound for full episode>,
-        "estimatedCostHigh": <integer USD rough Manhattan upper bound for full episode>,
         "typicalRecovery": "e.g. 4-6 months",
         "pros": "Brief advantage of this approach",
         "cons": "Brief disadvantage of this approach"
@@ -377,23 +344,10 @@ Return a complete JSON breakdown:
       "description": "One sentence: what this charge covers",
       "cptCode": "CPT code if applicable, else empty string",
       "hcpcsCode": "HCPCS L/C code for devices if applicable, else empty string",
-      "chargemasterLow": <integer USD — hospital list price lower bound>,
-      "chargemasterHigh": <integer USD — hospital list price upper bound>,
-      "insuranceLow": <integer USD — in-network rate lower bound, or null if unknown>,
-      "insuranceHigh": <integer USD — in-network rate upper bound, or null if unknown>,
-      "cashLow": <integer USD — self-pay lower bound>,
-      "cashHigh": <integer USD — self-pay upper bound>,
-      "notes": "Key cost driver note, or empty string",
-      "dataSource": "real" or "estimated"
+      "notes": "Key cost driver note, or empty string"
     }
   ],
-  "chargemasterTotalLow": <sum of all chargemasterLow>,
-  "chargemasterTotalHigh": <sum of all chargemasterHigh>,
-  "insuranceTotalLow": <sum of all non-null insuranceLow, or null>,
-  "insuranceTotalHigh": <sum of all non-null insuranceHigh, or null>,
-  "cashTotalLow": <sum of all cashLow>,
-  "cashTotalHigh": <sum of all cashHigh>,
-  "assumptions": "What insurance type and clinical scenario these estimates assume",
+  "assumptions": "What clinical scenario these components assume",
   "importantNotes": ["3-4 important notes about cost variability, deductibles, etc."]
 }
 
@@ -420,14 +374,30 @@ and follow-up visits.`;
         throw new Error("Could not parse AI response");
       }
 
-      let rawBreakdown: Omit<ProcedureBreakdown, "coinsurance" | "insurerName" | "dataCompleteness">;
+      let rawBreakdown: {
+        procedureName: string;
+        cptCode: string;
+        description: string;
+        conditionAnalysis?: ConditionAnalysis;
+        components: Array<{
+          id: string;
+          name: string;
+          category: string;
+          description: string;
+          cptCode: string;
+          hcpcsCode?: string;
+          notes: string;
+        }>;
+        assumptions: string;
+        importantNotes: string[];
+      };
       try {
         rawBreakdown = JSON.parse(match[0]);
       } catch {
         rawBreakdown = JSON.parse(repairJson(match[0]));
       }
 
-      // 6. Server-side enrichment — authoritative DB override (5s timeout)
+      // 6. Populate prices exclusively from DB — AI provides no dollar amounts
       const cptCodes = rawBreakdown.components.map((c) => c.cptCode).filter(Boolean);
       const insPayerType = payerType ?? "commercial";
 
@@ -461,31 +431,21 @@ and follow-up visits.`;
       const insByCpt = byCode(insRows);
 
       const enrichedComponents: BreakdownComponent[] = rawBreakdown.components.map((comp) => {
-        if (!comp.cptCode) return { ...comp, dataSource: "estimated" as const };
+        const gross = comp.cptCode ? (grossByCpt[comp.cptCode] ?? []) : [];
+        const cash = comp.cptCode ? (cashByCpt[comp.cptCode] ?? []) : [];
+        const ins = comp.cptCode ? (insByCpt[comp.cptCode] ?? []) : [];
 
-        const gross = grossByCpt[comp.cptCode] ?? [];
-        const cash = cashByCpt[comp.cptCode] ?? [];
-        const ins = insByCpt[comp.cptCode] ?? [];
-
-        if (!gross.length && !cash.length && !ins.length) {
-          return { ...comp, dataSource: "estimated" as const };
-        }
+        const hasData = gross.length > 0 || cash.length > 0 || ins.length > 0;
 
         return {
           ...comp,
-          ...(gross.length && {
-            chargemasterLow: Math.round(safeMin(gross)),
-            chargemasterHigh: Math.round(safeMax(gross)),
-          }),
-          ...(ins.length && {
-            insuranceLow: Math.round(safeMin(ins)),
-            insuranceHigh: Math.round(safeMax(ins)),
-          }),
-          ...(cash.length && {
-            cashLow: Math.round(safeMin(cash)),
-            cashHigh: Math.round(safeMax(cash)),
-          }),
-          dataSource: "real" as const,
+          chargemasterLow: gross.length ? Math.round(safeMin(gross)) : null,
+          chargemasterHigh: gross.length ? Math.round(safeMax(gross)) : null,
+          insuranceLow: ins.length ? Math.round(safeMin(ins)) : null,
+          insuranceHigh: ins.length ? Math.round(safeMax(ins)) : null,
+          cashLow: cash.length ? Math.round(safeMin(cash)) : null,
+          cashHigh: cash.length ? Math.round(safeMax(cash)) : null,
+          dataSource: hasData ? ("real" as const) : ("unavailable" as const),
         };
       });
 
@@ -504,7 +464,6 @@ and follow-up visits.`;
         const knownCpts = new Set(knownProcedures.map((p) => p.cptCode));
         for (const comp of enrichedComponents) {
           if (comp.cptCode && comp.cptCode.length >= 4 && !knownCpts.has(comp.cptCode)) {
-            // Mark unverified CPT codes in notes so the UI can show a warning
             comp.notes = comp.notes
               ? `${comp.notes} [CPT code not verified in database]`
               : "[CPT code not verified in database]";
@@ -515,35 +474,42 @@ and follow-up visits.`;
       const realCount = enrichedComponents.filter((c) => c.dataSource === "real").length;
       const dataCompleteness = enrichedComponents.length > 0 ? realCount / enrichedComponents.length : 0;
 
-      // ── Confidence level ───────────────────────────────────────────────────
+      // ── Confidence level — based purely on DB data availability ─────────────
       const confidence: "high" | "medium" | "low" =
         dataCompleteness > 0.5 ? "high" : dataCompleteness > 0 ? "medium" : "low";
 
-      // ── Compute totals ─────────────────────────────────────────────────────
+      // ── Compute totals (only from real DB data) ────────────────────────────
+      const chargemasterTotalLow = sumField(enrichedComponents, "chargemasterLow");
       const chargemasterTotalHigh = sumField(enrichedComponents, "chargemasterHigh");
+      const cashTotalLow = sumField(enrichedComponents, "cashLow");
       const cashTotalHigh = sumField(enrichedComponents, "cashHigh");
+      const insuranceTotalLow = sumField(enrichedComponents, "insuranceLow") || null;
+      const insuranceTotalHigh = sumField(enrichedComponents, "insuranceHigh") || null;
 
-      // ── Total price sanity check: flag if total exceeds $1M ────────────────
       const totalNotes = [...(rawBreakdown.importantNotes ?? [])];
-      if (chargemasterTotalHigh > 1_000_000 || cashTotalHigh > 1_000_000) {
+      if (dataCompleteness < 1) {
         totalNotes.push(
-          "Warning: Total estimated cost exceeds $1,000,000. This may indicate an unusual case or estimation error. Please verify with your provider."
+          `${Math.round((1 - dataCompleteness) * 100)}% of components have no chargemaster data available. Totals reflect only components with real hospital pricing.`
         );
       }
 
       const enrichedBreakdown: ProcedureBreakdown = {
-        ...rawBreakdown,
+        procedureName: rawBreakdown.procedureName,
+        cptCode: rawBreakdown.cptCode,
+        description: rawBreakdown.description,
+        conditionAnalysis: rawBreakdown.conditionAnalysis,
         components: enrichedComponents,
-        chargemasterTotalLow: sumField(enrichedComponents, "chargemasterLow"),
+        chargemasterTotalLow,
         chargemasterTotalHigh,
-        insuranceTotalLow: sumField(enrichedComponents, "insuranceLow") || null,
-        insuranceTotalHigh: sumField(enrichedComponents, "insuranceHigh") || null,
-        cashTotalLow: sumField(enrichedComponents, "cashLow"),
+        insuranceTotalLow,
+        insuranceTotalHigh,
+        cashTotalLow,
         cashTotalHigh,
         coinsurance,
         insurerName: insurerName ?? null,
         dataCompleteness,
         confidence,
+        assumptions: rawBreakdown.assumptions,
         importantNotes: totalNotes,
       };
 

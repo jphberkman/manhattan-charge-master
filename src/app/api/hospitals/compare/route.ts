@@ -19,7 +19,7 @@ export interface HospitalComparisonEntry {
   payerName: string | null;
   dataQuality: "real" | "partial";
   /** Where this data came from */
-  dataSource: "chargemaster" | "cms-avg" | "none";
+  dataSource: "chargemaster" | "cms-avg" | "cms-derived-estimate" | "none";
   isAiEstimate: boolean;
   dataLastUpdated: string | null;
   rank: number;
@@ -313,7 +313,7 @@ export async function GET(req: NextRequest) {
 
       const chargemasterPrice = Math.round(cms.avgCoveredCharges / 100);
       const medicarePayment = Math.round(cms.avgMedicarePayments / 100);
-      // Estimate commercial rate as ~2.5x Medicare payment
+      // CMS-derived estimate: commercial rate estimated as ~2.5x Medicare payment
       const estimatedInsRate = Math.round(medicarePayment * 2.5);
       const cashPrice = chargemasterPrice; // chargemaster is roughly cash price
 
@@ -326,7 +326,7 @@ export async function GET(req: NextRequest) {
         cashPrice,
         payerName: null,
         dataQuality: "partial" as const,
-        dataSource: "cms-avg",
+        dataSource: "cms-derived-estimate",
         isAiEstimate: false,
         dataLastUpdated: null,
         rank: 0,

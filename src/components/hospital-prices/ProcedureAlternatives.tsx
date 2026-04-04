@@ -4,16 +4,9 @@ import { cn } from "@/lib/utils";
 import { ArrowRight, Clock, CheckCircle2, AlertTriangle } from "lucide-react";
 import type { AlternativeProcedure } from "@/app/api/procedure-breakdown/route";
 
-const fmt = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  maximumFractionDigits: 0,
-});
-
 interface Props {
   primaryProcedure: string;
   primaryCptCode: string;
-  primaryCostRange: [number, number];
   alternatives: AlternativeProcedure[];
   onSelectAlternative: (name: string) => void;
 }
@@ -21,7 +14,6 @@ interface Props {
 export function ProcedureAlternatives({
   primaryProcedure,
   primaryCptCode,
-  primaryCostRange,
   alternatives,
   onSelectAlternative,
 }: Props) {
@@ -35,7 +27,7 @@ export function ProcedureAlternatives({
         </h3>
         <p className="text-xs text-neutral-500 mt-0.5">
           Different surgical options for treating the same condition, each with
-          trade-offs in cost, recovery, and outcomes.
+          trade-offs in recovery and outcomes. Click to view real hospital prices.
         </p>
       </div>
 
@@ -60,15 +52,6 @@ export function ProcedureAlternatives({
               CPT {primaryCptCode}
             </p>
           )}
-          <div className="mt-3 rounded-lg bg-violet-50 px-3 py-2">
-            <p className="text-xs font-medium text-neutral-500">
-              Estimated total
-            </p>
-            <p className="text-base font-bold text-violet-700">
-              {fmt.format(primaryCostRange[0])} &ndash;{" "}
-              {fmt.format(primaryCostRange[1])}
-            </p>
-          </div>
         </div>
 
         {/* Alternative cards */}
@@ -87,16 +70,6 @@ export function ProcedureAlternatives({
               {alt.approach}
               {alt.cptCode ? ` \u00B7 CPT ${alt.cptCode}` : ""}
             </p>
-
-            <div className="mt-3 rounded-lg bg-neutral-50 px-3 py-2">
-              <p className="text-xs font-medium text-neutral-500">
-                Estimated total
-              </p>
-              <p className="text-base font-bold text-neutral-800">
-                {fmt.format(alt.estimatedCostLow)} &ndash;{" "}
-                {fmt.format(alt.estimatedCostHigh)}
-              </p>
-            </div>
 
             <div className="mt-3 flex items-center gap-1.5 text-xs text-neutral-500">
               <Clock className="size-3.5 shrink-0" />
@@ -118,7 +91,7 @@ export function ProcedureAlternatives({
               onClick={() => onSelectAlternative(alt.name)}
               className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-violet-50 hover:border-violet-300 hover:text-violet-700"
             >
-              View detailed costs
+              View hospital prices
               <ArrowRight className="size-3.5" />
             </button>
           </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Building2, Trophy, ShieldCheck, Info } from "lucide-react";
+import { Loader2, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Building2, Trophy, ShieldCheck, Info, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GlossaryTip } from "./GlossaryTip";
 import type { HospitalComparisonEntry, CompareResponse } from "@/app/api/hospitals/compare/route";
@@ -31,6 +31,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("rank");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [expandedProvenance, setExpandedProvenance] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,6 +112,15 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
 
   const maxPatient = Math.max(...entries.map((e) => getPatientCost(e) ?? 0), 1);
   const maxCash    = Math.max(...entries.map((e) => e.cashPrice ?? 0), 1);
+
+  const toggleProvenance = (id: string) => {
+    setExpandedProvenance((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -387,9 +397,9 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                                 <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
                                   Hospital published · no insurer rate for this procedure
                                 </span>
-                              ) : entry.dataSource === "cms-avg" ? (
+                              ) : entry.dataSource === "cms-avg" || entry.dataSource === "cms-derived-estimate" ? (
                                 <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-blue-600 bg-blue-50 rounded px-1.5 py-0.5">
-                                  <Info className="size-2.5" /> CMS average · not from hospital file
+                                  <Info className="size-2.5" /> CMS-derived estimate · not from hospital file
                                 </span>
                               ) : (
                                 <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-neutral-400 bg-neutral-100 rounded px-1.5 py-0.5">
@@ -401,7 +411,61 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                                   {new Date(entry.dataLastUpdated).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
                                 </p>
                               )}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); toggleProvenance(entry.hospital.id); }}
+                                className="shrink-0 inline-flex items-center gap-0.5 text-[10px] font-medium text-neutral-400 hover:text-neutral-600 transition-colors"
+                                title="Source details"
+                              >
+                                <Info className="size-2.5" />
+                                <span>Source</span>
+                                <ChevronDown className={cn("size-2.5 transition-transform", expandedProvenance.has(entry.hospital.id) && "rotate-180")} />
+                              </button>
                             </div>
+                            {/* ── Provenance details (expandable) ── */}
+                            {expandedProvenance.has(entry.hospital.id) && (
+                              <div className="mt-2 rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-2 text-[11px] text-neutral-600 space-y-1">
+                                <div className="flex gap-4">
+                                  <span className="font-semibold text-neutral-400 w-20 shrink-0">Source</span>
+                                  <span>
+                                    {entry.dataSource === "chargemaster"
+                                      ? "Hospital chargemaster file (price transparency disclosure)"
+                                      : entry.dataSource === "cms-avg" || entry.dataSource === "cms-derived-estimate"
+                                        ? "CMS-derived estimate (commercial rate estimated from Medicare claims data)"
+                                        : "No published data available"}
+                                  </span>
+                                </div>
+                                <div className="flex gap-4">
+                                  <span className="font-semibold text-neutral-400 w-20 shrink-0">Hospital</span>
+                                  <span>{entry.hospital.name}</span>
+                                </div>
+                                <div className="flex gap-4">
+                                  <span className="font-semibold text-neutral-400 w-20 shrink-0">Updated</span>
+                                  <span>
+                                    {entry.dataLastUpdated
+                                      ? new Date(entry.dataLastUpdated).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+                                      : "Date unknown"}
+                                  </span>
+                                </div>
+                                <div className="flex gap-4">
+                                  <span className="font-semibold text-neutral-400 w-20 shrink-0">Price type</span>
+                                  <span>
+                                    {entry.dataQuality === "real" && entry.insuranceRate != null && entry.cashPrice != null
+                                      ? "Negotiated rate + Cash/self-pay"
+                                      : entry.insuranceRate != null
+                                        ? "Negotiated rate"
+                                        : entry.cashPrice != null
+                                          ? "Cash/self-pay"
+                                          : "Gross charge only"}
+                                  </span>
+                                </div>
+                                {(entry.dataSource === "cms-avg" || entry.dataSource === "cms-derived-estimate") && (
+                                  <p className="mt-1 text-[10px] text-blue-600 bg-blue-50 rounded px-2 py-1">
+                                    Note: This is a CMS-derived estimate. The insurance rate is estimated as ~2.5x the Medicare payment rate.
+                                    Actual negotiated rates may differ significantly.
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>

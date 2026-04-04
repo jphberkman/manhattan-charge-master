@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Search, Loader2, ChevronDown, ChevronUp, CircleDot,
-  Stethoscope, Wrench, AlertCircle, ListCollapse, Sparkles,
+  Stethoscope, Wrench, AlertCircle, ListCollapse,
   DatabaseZap, FileX, ShieldCheck, X, Receipt, Calculator, ArrowLeftRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -589,7 +589,7 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
               <p className="text-base font-bold text-neutral-800">No exact chargemaster match</p>
               <p className="mt-1 max-w-sm text-sm text-neutral-500 leading-relaxed">
                 Our uploaded hospital files don&apos;t have a direct match for &ldquo;{query}&rdquo;.
-                AI is building a detailed estimate using clinical guidelines and Manhattan market rates.
+                AI is identifying the procedure and its components to check for available pricing data.
               </p>
             </div>
           </div>
@@ -844,7 +844,6 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                   <ProcedureAlternatives
                     primaryProcedure={breakdown.procedureName}
                     primaryCptCode={breakdown.cptCode}
-                    primaryCostRange={[breakdown.cashTotalLow, breakdown.cashTotalHigh]}
                     alternatives={breakdown.conditionAnalysis.alternatives as AlternativeProcedure[]}
                     onSelectAlternative={(name) => {
                       setQuery(name);
@@ -952,7 +951,17 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                     )}
                   </div>
 
-                  {showInsurance && breakdown.insuranceTotalLow != null ? (
+                  {breakdown.dataCompleteness === 0 ? (
+                    <>
+                      <p className="text-2xl font-bold text-white/70">
+                        No chargemaster data available
+                      </p>
+                      <p className="text-sm text-white/50 mt-1">
+                        We identified the procedure components below but don&apos;t have hospital pricing in our database yet.
+                        Use the hospital comparison above for available prices.
+                      </p>
+                    </>
+                  ) : showInsurance && breakdown.insuranceTotalLow != null ? (
                     <>
                       <p className="text-3xl font-black text-white">
                         {fmtRange(
@@ -963,15 +972,30 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                       <p className="text-sm text-white/60 mt-1">
                         your estimated out-of-pocket cost
                         {insurance ? ` with ${insurance.displayLabel}` : ""}
+                        {breakdown.dataCompleteness != null && breakdown.dataCompleteness < 1
+                          ? ` (based on ${Math.round(breakdown.dataCompleteness * 100)}% of components with real data)`
+                          : ""}
                       </p>
                     </>
-                  ) : (
+                  ) : breakdown.cashTotalLow > 0 ? (
                     <>
                       <p className="text-3xl font-black text-white">
                         {fmtRange(breakdown.cashTotalLow, breakdown.cashTotalHigh)}
                       </p>
                       <p className="text-sm text-white/60 mt-1">
-                        {insurance?.payerType === "cash" ? "cash / self-pay price" : "estimated cost — add insurance for personalized pricing"}
+                        {insurance?.payerType === "cash" ? "cash / self-pay price" : "cash price from chargemaster data — add insurance for personalized pricing"}
+                        {breakdown.dataCompleteness != null && breakdown.dataCompleteness < 1
+                          ? ` (${Math.round(breakdown.dataCompleteness * 100)}% of components have data)`
+                          : ""}
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-2xl font-bold text-white/70">
+                        Limited pricing data
+                      </p>
+                      <p className="text-sm text-white/50 mt-1">
+                        Only partial chargemaster data is available. See the itemized breakdown for details.
                       </p>
                     </>
                   )}
@@ -1093,16 +1117,18 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                     const cfg = catCfg(category);
                     const totals = components.reduce(
                       (acc, c) => ({
-                        cmLo:  acc.cmLo  + c.chargemasterLow,
-                        cmHi:  acc.cmHi  + c.chargemasterHigh,
+                        cmLo:  acc.cmLo  + (c.chargemasterLow ?? 0),
+                        cmHi:  acc.cmHi  + (c.chargemasterHigh ?? 0),
                         insLo: acc.insLo + (c.insuranceLow  ?? 0),
                         insHi: acc.insHi + (c.insuranceHigh ?? 0),
-                        cashLo: acc.cashLo + c.cashLow,
-                        cashHi: acc.cashHi + c.cashHigh,
+                        cashLo: acc.cashLo + (c.cashLow ?? 0),
+                        cashHi: acc.cashHi + (c.cashHigh ?? 0),
                       }),
                       { cmLo: 0, cmHi: 0, insLo: 0, insHi: 0, cashLo: 0, cashHi: 0 },
                     );
                     const hasIns = components.some((c) => c.insuranceLow != null);
+                    const hasCm = components.some((c) => c.chargemasterLow != null);
+                    const hasCash = components.some((c) => c.cashLow != null);
 
                     return (
                       <div key={category}>
@@ -1116,10 +1142,10 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                             <span className={cn("text-xs font-bold uppercase tracking-wide", cfg.text)}>{category}</span>
                             <span className="text-xs text-neutral-400">({components.length})</span>
                           </div>
-                          <span className={cn("text-right text-xs font-semibold", cfg.text)}>{fmtRange(totals.cmLo, totals.cmHi)}</span>
+                          <span className={cn("text-right text-xs font-semibold", cfg.text)}>{hasCm ? fmtRange(totals.cmLo, totals.cmHi) : "—"}</span>
                           {showInsurance && <span className={cn("text-right text-xs font-semibold", cfg.text)}>{hasIns ? fmtRange(totals.insLo, totals.insHi) : "—"}</span>}
                           {showInsurance && <span className={cn("text-right text-xs font-semibold", cfg.text)}>{hasIns ? fmtRange(Math.round(totals.insLo * coinsurance), Math.round(totals.insHi * coinsurance)) : "—"}</span>}
-                          <span className={cn("text-right text-xs font-semibold", cfg.text)}>{fmtRange(totals.cashLo, totals.cashHi)}</span>
+                          <span className={cn("text-right text-xs font-semibold", cfg.text)}>{hasCash ? fmtRange(totals.cashLo, totals.cashHi) : "—"}</span>
                         </div>
 
                         {/* Component rows */}
@@ -1148,9 +1174,9 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                                         <CircleDot className="size-2.5" /> Real data
                                       </span>
                                     )}
-                                    {comp.dataSource === "estimated" && (
-                                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                                        <Sparkles className="size-2.5" /> Estimated
+                                    {comp.dataSource === "unavailable" && (
+                                      <span className="inline-flex items-center gap-1 rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-semibold text-neutral-500">
+                                        <FileX className="size-2.5" /> No data
                                       </span>
                                     )}
                                     {hasDetail && (
@@ -1161,10 +1187,10 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                                   </div>
                                   {comp.cptCode && <span className="text-xs text-neutral-300">code {comp.cptCode}</span>}
                                 </div>
-                                <div className="text-right"><span className="font-mono text-sm text-neutral-500">{fmtRange(comp.chargemasterLow, comp.chargemasterHigh)}</span></div>
-                                {showInsurance && <div className="text-right"><span className="font-mono text-sm font-semibold text-violet-700">{fmtRange(comp.insuranceLow, comp.insuranceHigh)}</span></div>}
-                                {showInsurance && <div className="text-right"><span className="font-mono text-sm font-bold text-neutral-900">{fmtRange(yourLo, yourHi)}</span></div>}
-                                <div className="text-right"><span className="font-mono text-sm text-neutral-500">{fmtRange(comp.cashLow, comp.cashHigh)}</span></div>
+                                <div className="text-right">{comp.chargemasterLow != null ? <span className="font-mono text-sm text-neutral-500">{fmtRange(comp.chargemasterLow, comp.chargemasterHigh)}</span> : <span className="text-xs text-neutral-300 italic">No data</span>}</div>
+                                {showInsurance && <div className="text-right">{comp.insuranceLow != null ? <span className="font-mono text-sm font-semibold text-violet-700">{fmtRange(comp.insuranceLow, comp.insuranceHigh)}</span> : <span className="text-xs text-neutral-300 italic">No data</span>}</div>}
+                                {showInsurance && <div className="text-right">{yourLo != null ? <span className="font-mono text-sm font-bold text-neutral-900">{fmtRange(yourLo, yourHi)}</span> : <span className="text-xs text-neutral-300 italic">No data</span>}</div>}
+                                <div className="text-right">{comp.cashLow != null ? <span className="font-mono text-sm text-neutral-500">{fmtRange(comp.cashLow, comp.cashHigh)}</span> : <span className="text-xs text-neutral-300 italic">No data</span>}</div>
                               </div>
                               {expanded && hasDetail && (
                                 <div className="border-t border-neutral-50 bg-neutral-50/60 px-6 py-3 space-y-1">
@@ -1189,7 +1215,7 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                   )}
                   <p className="text-xs text-neutral-400 italic">
                     Items marked <span className="font-semibold text-green-700 not-italic">Real data</span> use prices from hospitals&apos; official published chargemaster files.{" "}
-                    Items marked <span className="font-semibold text-amber-700 not-italic">Estimated</span> are AI-generated market estimates.{" "}
+                    Items marked <span className="font-semibold text-neutral-500 not-italic">No data</span> do not have chargemaster pricing in our database.{" "}
                     {breakdown.dataCompleteness != null && (
                       <>{Math.round(breakdown.dataCompleteness * 100)}% of components backed by real chargemaster data. </>
                     )}

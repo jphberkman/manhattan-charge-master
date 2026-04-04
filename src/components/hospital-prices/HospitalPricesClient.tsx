@@ -53,31 +53,13 @@ export function HospitalPricesClient() {
           const broadRes = await fetch(`/api/prices?${broadParams}`);
           insData = broadRes.ok ? await broadRes.json() : [];
         }
-
-        if (insData.length === 0) {
-          const estParams = new URLSearchParams({ procedureId: procedure.id, payerType: ins.payerType });
-          const estRes = await fetch(`/api/prices/estimate?${estParams}`);
-          if (estRes.ok) {
-            const est = await estRes.json();
-            if (Array.isArray(est) && est.length > 0) { insData = est; setIsAiEstimate(true); }
-          }
-        }
       } else if (!ins) {
         const allParams = new URLSearchParams({ procedureId: procedure.id, payerType: "commercial" });
         const allRes = await fetch(`/api/prices?${allParams}`);
         insData = allRes.ok ? await allRes.json() : [];
       }
 
-      if (cashData.length === 0 && insData.length > 0) {
-        const estCashRes = await fetch(`/api/prices/estimate?${new URLSearchParams({ procedureId: procedure.id, payerType: "cash" })}`);
-        if (estCashRes.ok) {
-          const est = await estCashRes.json();
-          if (Array.isArray(est)) setCashPrices(est);
-        }
-      } else {
-        setCashPrices(cashData);
-      }
-
+      setCashPrices(cashData);
       setInsurancePrices(insData);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load prices");
