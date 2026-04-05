@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { Check, ChevronLeft, Landmark, Hospital, Banknote } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -225,12 +226,12 @@ function InsurerLogo({ insurer, size = "md" }: { insurer: Insurer; size?: "sm" |
 
   return (
     <span className={cn("inline-flex items-center justify-center rounded-xl bg-white overflow-hidden px-2 w-full", boxH)}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
+      <Image
         src={insurer.logoUrl}
         alt={insurer.shortName}
-        className="h-full w-full object-contain"
-        loading="lazy"
+        width={size === "sm" ? 28 : 36}
+        height={size === "sm" ? 28 : 36}
+        className="object-contain"
         onError={() => setImgError(true)}
       />
     </span>
