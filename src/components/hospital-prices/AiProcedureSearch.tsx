@@ -957,7 +957,7 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
             </div>
           )}
 
-          {/* ── Bill Summary Card — always visible, click to expand itemized ── */}
+          {/* ── Bill Summary Card — only show totals when data is sufficient ── */}
           <div className="overflow-hidden rounded-2xl border-2 border-violet-200 bg-white shadow-md">
 
             {/* Total header */}
@@ -967,12 +967,12 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                   <div className="flex items-center gap-2 mb-2">
                     <Receipt className="size-4 text-violet-400" />
                     <p className="text-xs font-semibold uppercase tracking-wider text-white/50">
-                      Your Estimated Bill
+                      {(breakdown.dataCompleteness ?? 0) >= 0.5 ? "Your Estimated Bill" : "Procedure Breakdown"}
                     </p>
-                    {breakdown.dataCompleteness != null && (
+                    {breakdown.dataCompleteness != null && breakdown.dataCompleteness >= 0.5 && (
                       <span className={cn(
                         "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                        breakdown.dataCompleteness > 0.5
+                        breakdown.dataCompleteness >= 0.7
                           ? "bg-green-500/20 text-green-300"
                           : "bg-amber-500/20 text-amber-300"
                       )}>
@@ -981,14 +981,17 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                     )}
                   </div>
 
-                  {breakdown.dataCompleteness === 0 ? (
+                  {(breakdown.dataCompleteness ?? 0) < 0.5 ? (
                     <>
-                      <p className="text-2xl font-bold text-white/70">
-                        No chargemaster data available
+                      <p className="text-xl font-bold text-white/70">
+                        Insufficient chargemaster data for a reliable total
                       </p>
                       <p className="text-sm text-white/50 mt-1">
-                        We identified the procedure components below but don&apos;t have hospital pricing in our database yet.
-                        Use the hospital comparison above for available prices.
+                        Only {Math.round((breakdown.dataCompleteness ?? 0) * 100)}% of procedure components have real hospital pricing.
+                        The hospital comparison table above shows actual per-hospital prices — use that for the most accurate estimates.
+                      </p>
+                      <p className="text-xs text-white/40 mt-2">
+                        The itemized breakdown below shows which components have real data and which are missing.
                       </p>
                     </>
                   ) : showInsurance && breakdown.insuranceTotalLow != null ? (
@@ -1021,11 +1024,11 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                     </>
                   ) : (
                     <>
-                      <p className="text-2xl font-bold text-white/70">
+                      <p className="text-xl font-bold text-white/70">
                         Limited pricing data
                       </p>
                       <p className="text-sm text-white/50 mt-1">
-                        Only partial chargemaster data is available. See the itemized breakdown for details.
+                        Only partial chargemaster data is available. The hospital comparison table above is your best source for pricing.
                       </p>
                     </>
                   )}
@@ -1042,41 +1045,43 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
               </div>
             </div>
 
-            {/* Three-column price summary */}
-            <div className={cn(
-              "grid divide-x divide-neutral-100 border-b border-neutral-100",
-              showInsurance ? "grid-cols-3" : "grid-cols-2"
-            )}>
-              <div className="px-5 py-4">
-                <p className="text-xs text-neutral-400 mb-1">List price (chargemaster)</p>
-                <p className="font-mono text-sm font-bold text-neutral-600">
-                  {fmtRange(breakdown.chargemasterTotalLow, breakdown.chargemasterTotalHigh)}
-                </p>
-              </div>
-              {showInsurance && (
+            {/* Three-column price summary — only when data is sufficient */}
+            {(breakdown.dataCompleteness ?? 0) >= 0.5 && (
+              <div className={cn(
+                "grid divide-x divide-neutral-100 border-b border-neutral-100",
+                showInsurance ? "grid-cols-3" : "grid-cols-2"
+              )}>
                 <div className="px-5 py-4">
-                  <p className="text-xs text-neutral-400 mb-1">Insurance pays</p>
-                  <p className="font-mono text-sm font-bold text-violet-700">
-                    {breakdown.insuranceTotalLow != null
-                      ? fmtRange(
-                          Math.round(breakdown.insuranceTotalLow  * (1 - coinsurance)),
-                          Math.round((breakdown.insuranceTotalHigh ?? 0) * (1 - coinsurance)),
-                        )
-                      : <span className="text-neutral-300">Add insurance above</span>
-                    }
+                  <p className="text-xs text-neutral-400 mb-1">List price (chargemaster)</p>
+                  <p className="font-mono text-sm font-bold text-neutral-600">
+                    {fmtRange(breakdown.chargemasterTotalLow, breakdown.chargemasterTotalHigh)}
                   </p>
                 </div>
-              )}
-              <div className="px-5 py-4">
-                <p className="text-xs text-neutral-400 mb-1">Without insurance</p>
-                <p className="font-mono text-sm font-bold text-neutral-600">
-                  {fmtRange(breakdown.cashTotalLow, breakdown.cashTotalHigh)}
-                </p>
+                {showInsurance && (
+                  <div className="px-5 py-4">
+                    <p className="text-xs text-neutral-400 mb-1">Insurance pays</p>
+                    <p className="font-mono text-sm font-bold text-violet-700">
+                      {breakdown.insuranceTotalLow != null
+                        ? fmtRange(
+                            Math.round(breakdown.insuranceTotalLow  * (1 - coinsurance)),
+                            Math.round((breakdown.insuranceTotalHigh ?? 0) * (1 - coinsurance)),
+                          )
+                        : <span className="text-neutral-300">Add insurance above</span>
+                      }
+                    </p>
+                  </div>
+                )}
+                <div className="px-5 py-4">
+                  <p className="text-xs text-neutral-400 mb-1">Without insurance</p>
+                  <p className="font-mono text-sm font-bold text-neutral-600">
+                    {fmtRange(breakdown.cashTotalLow, breakdown.cashTotalHigh)}
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
 
-            {/* Insurance covers callout */}
-            {showInsurance && breakdown.insuranceTotalLow != null && coinsurance < 1 && (
+            {/* Insurance covers callout — only when data is sufficient */}
+            {showInsurance && breakdown.insuranceTotalLow != null && coinsurance < 1 && (breakdown.dataCompleteness ?? 0) >= 0.5 && (
               <div className="mx-5 my-4 flex items-center justify-between gap-4 rounded-xl border border-violet-200 bg-violet-50 px-5 py-3">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-violet-600">Your insurance picks up</p>
