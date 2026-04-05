@@ -13,10 +13,18 @@ export async function POST(req: NextRequest) {
   }
 
   const res = NextResponse.json({ ok: true });
+  // Auth cookie (httpOnly — server-side API protection)
   res.cookies.set(COOKIE_NAME, COOKIE_VALUE, {
     httpOnly: true,
     path: "/",
-    maxAge: 60 * 60 * 24, // 24 hours
+    maxAge: 60 * 60 * 24,
+    sameSite: "lax",
+  });
+  // Client-readable flag (not httpOnly — so JS can detect admin mode)
+  res.cookies.set("admin-mode", "true", {
+    httpOnly: false,
+    path: "/",
+    maxAge: 60 * 60 * 24,
     sameSite: "lax",
   });
   return res;
@@ -27,6 +35,11 @@ export async function DELETE() {
   const res = NextResponse.json({ ok: true });
   res.cookies.set(COOKIE_NAME, "", {
     httpOnly: true,
+    path: "/",
+    maxAge: 0,
+  });
+  res.cookies.set("admin-mode", "", {
+    httpOnly: false,
     path: "/",
     maxAge: 0,
   });

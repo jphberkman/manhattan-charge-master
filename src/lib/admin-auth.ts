@@ -10,12 +10,12 @@ export function isAdminRequest(request: Request): boolean {
   });
 }
 
-/** Client-side: check if admin-session cookie exists */
+/** Client-side: check if admin mode is active (reads the non-httpOnly flag cookie) */
 export function hasAdminCookie(): boolean {
   if (typeof document === "undefined") return false;
   return document.cookie
     .split(";")
-    .some((c) => c.trim().startsWith(`${COOKIE_NAME}=${COOKIE_VALUE}`));
+    .some((c) => c.trim().startsWith("admin-mode=true"));
 }
 
 export { COOKIE_NAME, COOKIE_VALUE };
