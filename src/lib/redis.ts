@@ -10,7 +10,7 @@
 
 // ── Try Vercel KV first ────────────────────────────────────────────────────
 
-function useVercelKv(): boolean {
+function hasVercelKv(): boolean {
   return !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 }
 
@@ -78,7 +78,7 @@ let _client: CacheClient | null = null;
 function getClient(): CacheClient {
   if (_client) return _client;
 
-  if (useVercelKv()) {
+  if (hasVercelKv()) {
     // Vercel KV — lazy-initialize on first use
     let kvClient: CacheClient | null = null;
     _client = {
