@@ -1,5 +1,15 @@
 import { Info, Database, Brain, ShieldAlert, Building2 } from "lucide-react";
 import { AboutIntro } from "@/components/hospital-prices/AboutIntro";
+import {
+  AboutTitle,
+  AboutDataTitle,
+  AboutDataBody,
+  AboutAiTitle,
+  AboutAiBody,
+  AboutHospitalsTitle,
+  AboutDisclaimerTitle,
+  AboutDisclaimerBody,
+} from "@/components/hospital-prices/AboutSections";
 
 export const revalidate = 3600; // ISR: revalidate every hour
 
@@ -14,55 +24,31 @@ export default function AboutPage() {
     <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
       <div className="flex items-center gap-2">
         <Info className="size-5 text-violet-400" />
-        <h1 className="text-2xl font-bold tracking-tight text-white">
-          About Our Data
-        </h1>
+        <AboutTitle />
       </div>
 
       <div className="mt-8 space-y-8">
         {/* Where data comes from */}
         <Section
           icon={<Database className="size-5 text-violet-400" />}
-          title="Where the data comes from"
+          title={<AboutDataTitle />}
         >
           <AboutIntro />
-          <p>
-            Each file contains chargemaster rates, cash/self-pay
-            prices, and negotiated rates for specific insurance plans.
-          </p>
+          <AboutDataBody />
         </Section>
 
         {/* What AI does */}
         <Section
           icon={<Brain className="size-5 text-violet-400" />}
-          title="How AI is used"
+          title={<AboutAiTitle />}
         >
-          <p>
-            AI is used in <strong>two limited ways</strong>:
-          </p>
-          <ul className="mt-2 list-disc space-y-1 pl-5">
-            <li>
-              <strong>Search understanding:</strong> When you describe a
-              procedure in plain English, AI maps your description to the
-              correct CPT/procedure codes.
-            </li>
-            <li>
-              <strong>Data upload parsing:</strong> When hospital files use
-              non-standard formats, AI helps detect column mappings during
-              import.
-            </li>
-          </ul>
-          <p className="mt-3">
-            AI is <strong>never</strong> used to generate, estimate, or
-            fabricate prices. If a price is not in our database, we tell you
-            it&apos;s missing rather than guessing.
-          </p>
+          <AboutAiBody />
         </Section>
 
         {/* Hospitals */}
         <Section
           icon={<Building2 className="size-5 text-violet-400" />}
-          title="Covered hospitals"
+          title={<AboutHospitalsTitle />}
         >
           <ul className="mt-2 space-y-1.5">
             {[
@@ -88,19 +74,9 @@ export default function AboutPage() {
         {/* Disclaimer */}
         <Section
           icon={<ShieldAlert className="size-5 text-amber-400" />}
-          title="Disclaimer"
+          title={<AboutDisclaimerTitle />}
         >
-          <p>
-            This tool provides price information from publicly available
-            hospital transparency files for educational and informational
-            purposes only. It is <strong>not medical advice</strong>.
-          </p>
-          <p>
-            Actual costs may vary based on your specific treatment, insurance
-            benefits, deductibles, co-pays, and provider agreements. Always
-            verify final costs with your healthcare provider and insurance
-            company before making decisions.
-          </p>
+          <AboutDisclaimerBody />
         </Section>
       </div>
     </div>
@@ -113,14 +89,14 @@ function Section({
   children,
 }: {
   icon: React.ReactNode;
-  title: string;
+  title: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="rounded-xl border border-white/20 bg-white/10 p-6 backdrop-blur-sm">
       <div className="mb-3 flex items-center gap-2">
         {icon}
-        <h2 className="text-lg font-semibold text-white">{title}</h2>
+        {title}
       </div>
       <div className="space-y-3 text-sm leading-relaxed text-white/60">
         {children}

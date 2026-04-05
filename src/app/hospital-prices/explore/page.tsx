@@ -227,7 +227,7 @@ export default function ConcernExplorePage() {
                   <div className="flex size-8 items-center justify-center rounded-lg bg-violet-500/20">
                     <Stethoscope className="size-4 text-violet-400" />
                   </div>
-                  <h2 className="text-base font-bold text-white">What is this condition?</h2>
+                  <EditableText contentKey="explore.section.condition" defaultValue="What is this condition?" as="h2" className="text-base font-bold text-white" />
                 </div>
                 <AiBadge />
               </div>
@@ -241,7 +241,7 @@ export default function ConcernExplorePage() {
                   <div className="flex size-8 items-center justify-center rounded-lg bg-violet-500/20">
                     <ClipboardList className="size-4 text-violet-400" />
                   </div>
-                  <h2 className="text-base font-bold text-white">Common causes</h2>
+                  <EditableText contentKey="explore.section.causes" defaultValue="Common causes" as="h2" className="text-base font-bold text-white" />
                 </div>
                 <AiBadge />
               </div>
@@ -262,7 +262,7 @@ export default function ConcernExplorePage() {
                   <div className="flex size-8 items-center justify-center rounded-lg bg-violet-500/20">
                     <Heart className="size-4 text-violet-400" />
                   </div>
-                  <h2 className="text-base font-bold text-white">Common treatment options</h2>
+                  <EditableText contentKey="explore.section.treatments" defaultValue="Common treatment options" as="h2" className="text-base font-bold text-white" />
                 </div>
                 <AiBadge />
               </div>
@@ -297,7 +297,7 @@ export default function ConcernExplorePage() {
                   <div className="flex size-8 items-center justify-center rounded-lg bg-red-500/20">
                     <ShieldAlert className="size-4 text-red-400" />
                   </div>
-                  <h2 className="text-base font-bold text-white">When to seek care</h2>
+                  <EditableText contentKey="explore.section.seekCare" defaultValue="When to seek care" as="h2" className="text-base font-bold text-white" />
                 </div>
                 <AiBadge />
               </div>
@@ -318,7 +318,7 @@ export default function ConcernExplorePage() {
                   <div className="flex size-8 items-center justify-center rounded-lg bg-violet-500/20">
                     <HelpCircle className="size-4 text-violet-400" />
                   </div>
-                  <h2 className="text-base font-bold text-white">Questions to ask your doctor</h2>
+                  <EditableText contentKey="explore.section.questions" defaultValue="Questions to ask your doctor" as="h2" className="text-base font-bold text-white" />
                 </div>
                 <AiBadge />
               </div>
@@ -342,7 +342,7 @@ export default function ConcernExplorePage() {
                     <div className="flex size-8 items-center justify-center rounded-lg bg-violet-500/20">
                       <Search className="size-4 text-violet-400" />
                     </div>
-                    <h2 className="text-base font-bold text-white">Look up real hospital prices</h2>
+                    <EditableText contentKey="explore.section.relatedPrices" defaultValue="Look up real hospital prices" as="h2" className="text-base font-bold text-white" />
                   </div>
                   <AiBadge />
                 </div>
@@ -369,7 +369,7 @@ export default function ConcernExplorePage() {
               <div className="flex items-start gap-3">
                 <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-400" />
                 <div>
-                  <p className="text-sm font-semibold text-amber-300">Important disclaimer</p>
+                  <EditableText contentKey="explore.disclaimer.footer.title" defaultValue="Important disclaimer" as="p" className="text-sm font-semibold text-amber-300" />
                   <p className="text-xs text-amber-300/70 mt-0.5 leading-relaxed">{result.disclaimer}</p>
                 </div>
               </div>
@@ -381,7 +381,7 @@ export default function ConcernExplorePage() {
                 onClick={() => { setResult(null); setQuery(""); inputRef.current?.focus(); }}
                 className="rounded-xl border border-white/20 bg-white/10 px-5 py-2.5 text-sm font-semibold text-white/70 shadow-sm backdrop-blur-sm transition-all hover:border-violet-400/50 hover:text-violet-300"
               >
-                Explore another concern
+                <EditableText contentKey="explore.searchAgain" defaultValue="Explore another concern" as="span" />
               </button>
             </div>
           </div>

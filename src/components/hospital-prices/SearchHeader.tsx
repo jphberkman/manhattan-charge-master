@@ -24,7 +24,12 @@ export function SearchHeader() {
       />
       <div className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-900/20 px-3 py-1.5 text-xs font-medium text-emerald-400">
         <ShieldCheck className="size-3.5" />
-        AI helps us understand your search terms. All prices shown come from hospital transparency files.
+        <EditableText
+          contentKey="search.trustBadge"
+          defaultValue="AI helps us understand your search terms. All prices shown come from hospital transparency files."
+          as="span"
+          className="text-xs font-medium text-emerald-400"
+        />
       </div>
     </div>
   );

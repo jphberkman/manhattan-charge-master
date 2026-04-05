@@ -54,9 +54,13 @@ export function EditableFooter() {
           </div>
         </div>
 
-        <div className="mt-8 border-t border-white/10 pt-6 text-center text-xs text-white/30">
-          Data sourced from hospital price transparency files required under the
-          Hospital Price Transparency Rule (CMS-1717-F2).
+        <div className="mt-8 border-t border-white/10 pt-6 text-center">
+          <EditableText
+            contentKey="footer.cmsRule"
+            defaultValue="Data sourced from hospital price transparency files required under the Hospital Price Transparency Rule (CMS-1717-F2)."
+            as="p"
+            className="text-xs text-white/30"
+          />
         </div>
       </div>
     </footer>
