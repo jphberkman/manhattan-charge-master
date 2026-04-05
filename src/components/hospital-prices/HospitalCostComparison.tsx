@@ -36,6 +36,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    const loadStart = Date.now();
     try {
       const params = new URLSearchParams({ cptCode, coinsurance: String(coinsurance) });
       if (insurance?.payerType) params.set("payerType", insurance.payerType);
@@ -47,6 +48,14 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
       setEntries(data.entries);
       setMedicare(data.medicare ?? null);
       onPricesLoaded?.(data.entries);
+
+      // Track hospital comparison load
+      window.gtag?.("event", "hospital_comparison_loaded", {
+        procedure: procedureName,
+        cpt_code: cptCode,
+        hospital_count: data.entries.length,
+        load_time_ms: Date.now() - loadStart,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load hospital prices");
     } finally {

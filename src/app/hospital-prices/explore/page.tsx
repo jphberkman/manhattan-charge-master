@@ -74,6 +74,13 @@ export default function ConcernExplorePage() {
 
       const data: ConcernExploreResponse = await res.json();
       setResult(data);
+
+      // Track concern exploration
+      window.gtag?.("event", "concern_explored", {
+        search_term: trimmed,
+        treatment_count: data.treatments?.length ?? 0,
+        related_procedures: data.relatedProcedures?.length ?? 0,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {

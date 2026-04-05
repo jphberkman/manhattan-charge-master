@@ -3,6 +3,14 @@
     {
       "path": "/api/admin/prewarm",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/admin/data-freshness",
+      "schedule": "0 6 * * 1"
+    },
+    {
+      "path": "/api/admin/data-quality-snapshot",
+      "schedule": "0 7 * * *"
     }
   ]
 }

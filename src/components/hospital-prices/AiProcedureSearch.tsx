@@ -130,6 +130,7 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
   const elapsedTimer  = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef      = useRef<AbortController | null>(null);
+  const searchStartRef = useRef<number>(0);
 
   useEffect(() => () => {
     phaseTimers.current.forEach(clearTimeout);
@@ -167,6 +168,7 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
     const trimmed = q.trim();
     if (!trimmed) return;
     reset();
+    searchStartRef.current = Date.now();
     setQuery(trimmed);
     setPhase("db-searching");
     setError(null);
@@ -185,6 +187,15 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
       if (!res.ok || data.noData || !data.procedures.length) {
         dbMatchesRef.current = [];
         setPhase("no-data");
+
+        // Track search with no DB results (AI fallback)
+        window.gtag?.("event", "procedure_search", {
+          search_term: trimmed,
+          result_count: 0,
+          search_duration_ms: Date.now() - searchStartRef.current,
+          source: "ai_fallback",
+        });
+
         // No DB data — AI is the only source, show full loading UI
         void runAiBreakdown(trimmed, insurance);
       } else {
@@ -192,6 +203,16 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
         setDbMatches(data.procedures);
         setSelectedMatch(data.procedures[0]);
         setPhase("db-results");
+
+        // Track successful procedure search
+        window.gtag?.("event", "procedure_search", {
+          search_term: trimmed,
+          cpt_code: data.procedures[0]?.cptCode ?? "",
+          result_count: data.procedures.length,
+          search_duration_ms: Date.now() - searchStartRef.current,
+          source: "database",
+        });
+
         // DB data found — hospital prices show immediately, AI enriches in background
         void runAiBackground(trimmed, insurance);
       }
@@ -414,6 +435,15 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
 
   const handleInsuranceChange = (ins: InsuranceSelection | null) => {
     setInsurance(ins);
+
+    // Track insurance selection
+    if (ins) {
+      window.gtag?.("event", "insurance_selected", {
+        insurer_name: ins.insurer ?? "none",
+        plan_type: ins.payerType ?? "unknown",
+      });
+    }
+
     if (!query.trim() || phase === "idle" || phase === "db-searching") return;
     // DB-results: HospitalCostComparison re-fetches automatically via prop change.
     // Re-run AI in background to update the itemized breakdown with insurer-specific rates.

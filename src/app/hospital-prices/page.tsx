@@ -1,5 +1,7 @@
 import { HomePageContent } from "@/components/hospital-prices/HomePageContent";
 
+export const revalidate = 3600; // ISR: revalidate every hour
+
 export const metadata = {
   title: "Shop for Care — Know What You'll Pay Before You Go",
   description:

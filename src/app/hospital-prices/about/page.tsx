@@ -1,6 +1,8 @@
 import { Info, Database, Brain, ShieldAlert, Building2 } from "lucide-react";
 import { AboutIntro } from "@/components/hospital-prices/AboutIntro";
 
+export const revalidate = 3600; // ISR: revalidate every hour
+
 export const metadata = {
   title: "About Our Data — Shop for Care",
   description:
