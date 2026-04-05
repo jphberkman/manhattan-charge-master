@@ -44,7 +44,15 @@ export function EditModeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     fetch("/api/admin/content")
       .then((r) => r.json())
-      .then((data) => setContent(data))
+      .then((data) => {
+        // API returns { content, grouped } — we only need the flat content map
+        if (data && typeof data === "object" && data.content) {
+          setContent(data.content);
+        } else if (data && typeof data === "object" && !data.content) {
+          // Fallback: if API returns flat map directly
+          setContent(data);
+        }
+      })
       .catch(() => {});
   }, []);
 

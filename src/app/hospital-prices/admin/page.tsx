@@ -20,7 +20,8 @@ export default function AdminPage() {
       body: JSON.stringify({ password }),
     });
     if (res.ok) {
-      router.push("/hospital-prices");
+      // Full page reload so the layout re-reads the admin cookie
+      window.location.href = "/hospital-prices";
     } else {
       setError("Incorrect password.");
       setLoading(false);
