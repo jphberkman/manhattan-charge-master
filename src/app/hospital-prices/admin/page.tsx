@@ -49,7 +49,6 @@ export default function AdminPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Admin password"
-            autoFocus
             className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-white placeholder:text-white/30 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-400/20"
           />
           {error && <p className="text-sm text-red-400">{error}</p>}

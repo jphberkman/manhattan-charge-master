@@ -131,7 +131,7 @@ export function PhysicianRecommendations({ procedureName, cptCode, insurance, ho
                           "flex size-12 items-center justify-center rounded-full text-lg font-bold text-white",
                           isBest ? "bg-violet-600" : "bg-neutral-300",
                         )}>
-                          {doc.name.split(" ").at(-1)?.[0] ?? "?"}
+                          {(doc.name.split(" ").slice(-1)[0] ?? "?")[0]}
                         </div>
                         {isBest && (
                           <div className="absolute -top-1.5 -right-1.5 flex size-5 items-center justify-center rounded-full bg-amber-400 shadow">

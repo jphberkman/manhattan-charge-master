@@ -112,9 +112,9 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
   const withCash = entries.filter((e) => e.cashPrice != null && e.cashPrice > 0).sort((a, b) => (a.cashPrice ?? 0) - (b.cashPrice ?? 0));
 
   const cheapestIns   = withIns[0] ?? null;
-  const costliestIns  = withIns.at(-1) ?? null;
+  const costliestIns  = withIns[withIns.length - 1] ?? null;
   const cheapestCash  = withCash[0] ?? null;
-  const costliestCash = withCash.at(-1) ?? null;
+  const costliestCash = withCash[withCash.length - 1] ?? null;
 
   const insSavings  = cheapestIns && costliestIns  ? (getPatientCost(costliestIns) ?? 0) - (getPatientCost(cheapestIns) ?? 0) : 0;
   const cashSavings = cheapestCash && costliestCash ? (costliestCash.cashPrice   ?? 0) - (cheapestCash.cashPrice   ?? 0) : 0;

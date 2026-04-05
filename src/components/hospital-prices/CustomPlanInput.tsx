@@ -208,6 +208,7 @@ function PlanField({ label, helper, prefix, suffix, value, onChange }: PlanField
         )}
         <input
           type="number"
+          inputMode="decimal"
           min={0}
           step={label.includes("Coinsurance") ? 1 : 100}
           value={value}
