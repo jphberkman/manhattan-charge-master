@@ -1,12 +1,10 @@
 "use client";
 
 import { useEditMode } from "@/lib/contexts/edit-mode-context";
-import { Pencil, LogOut } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { Pencil, LogOut, Eye, EyeOff } from "lucide-react";
 
 export function EditModeToggle() {
   const { editMode, isAdmin, toggleEditMode } = useEditMode();
-  const router = useRouter();
 
   if (!isAdmin) return null;
 
@@ -16,31 +14,30 @@ export function EditModeToggle() {
   };
 
   return (
-    <div className="flex items-center justify-between bg-gradient-to-r from-violet-900/90 to-violet-800/90 px-4 py-2 text-sm text-white">
+    <div className="sticky top-0 z-[60] flex items-center justify-between bg-violet-700 px-4 py-2 text-sm text-white shadow-lg">
       <div className="flex items-center gap-2">
-        <Pencil className="size-3.5 text-violet-300" />
-        <span className="font-medium">
-          Admin mode
-          <span className="ml-1 font-normal text-white/60">
-            {editMode
-              ? "— click any highlighted text to edit"
-              : "— editing paused"}
-          </span>
+        <Pencil className="size-3.5" />
+        <span className="font-semibold">Editing live site</span>
+        <span className="font-normal text-violet-200">
+          {editMode
+            ? "— click any text with a dashed border to edit. Changes save instantly."
+            : "— editing paused. Click Resume to continue."}
         </span>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         <button
           onClick={toggleEditMode}
-          className="rounded-md border border-white/20 px-3 py-1 text-xs font-medium transition hover:bg-white/10"
+          className="flex items-center gap-1.5 rounded-lg border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-white/20"
         >
-          {editMode ? "Pause editing" : "Resume editing"}
+          {editMode ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+          {editMode ? "Pause" : "Resume"}
         </button>
         <button
           onClick={handleLogout}
-          className="flex items-center gap-1.5 rounded-md border border-white/20 px-3 py-1 text-xs font-medium transition hover:bg-white/10"
+          className="flex items-center gap-1.5 rounded-lg border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-medium transition hover:bg-red-500/80 hover:border-red-500"
         >
           <LogOut className="size-3" />
-          Exit admin
+          Sign out
         </button>
       </div>
     </div>
