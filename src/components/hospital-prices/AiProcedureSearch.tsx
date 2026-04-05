@@ -861,10 +861,14 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
                     Based on what you described, you likely need:
                   </p>
                 )}
-                <p className="text-lg font-bold text-white">{breakdown.procedureName}</p>
-                {breakdown.cptCode && (
-                  <p className="text-xs text-white/60 mt-0.5">CPT {breakdown.cptCode}</p>
-                )}
+                <div className="flex items-baseline gap-3 flex-wrap">
+                  <p className="text-lg font-bold text-white">{breakdown.procedureName}</p>
+                  {breakdown.cptCode && (
+                    <span className="inline-flex items-center rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-xs font-semibold text-violet-200">
+                      CPT {breakdown.cptCode}
+                    </span>
+                  )}
+                </div>
                 <p className="mt-1 text-sm text-white/80 leading-relaxed max-w-2xl">
                   {breakdown.conditionAnalysis?.isConditionDescription
                     ? breakdown.conditionAnalysis.reasoning

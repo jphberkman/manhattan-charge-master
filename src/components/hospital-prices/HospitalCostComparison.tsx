@@ -148,7 +148,10 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
               Hospital price comparison
             </p>
-            <h3 className="mt-0.5 text-lg font-bold text-white">{procedureName}</h3>
+            <h3 className="mt-0.5 text-lg font-bold text-white">
+              {procedureName}
+              {cptCode && <span className="ml-2 text-sm font-normal text-violet-300">CPT {cptCode}</span>}
+            </h3>
             <p className="mt-0.5 text-sm text-slate-400">
               Ranked cheapest to most expensive — with your insurance and without
             </p>
