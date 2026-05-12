@@ -20,6 +20,16 @@ const SITE_GATED_PATHS = [
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // ── hirepierceatdecagon.com → serve the hire-pierce page at root ─────────
+  const host = request.headers.get("host")?.toLowerCase() ?? "";
+  if (host === "hirepierceatdecagon.com" || host === "www.hirepierceatdecagon.com") {
+    if (pathname === "/" || pathname === "") {
+      const url = request.nextUrl.clone();
+      url.pathname = "/hire-pierce-at-decagon";
+      return NextResponse.rewrite(url);
+    }
+  }
+
   // ── Site-wide password gate ──────────────────────────────────────────────
   const sitePassword = process.env.SITE_PASSWORD;
   if (sitePassword) {
