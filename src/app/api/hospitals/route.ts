@@ -9,6 +9,8 @@ export async function GET() {
       name: h.name,
       address: h.address,
       system: h.system,
+      cmsCcn: h.cmsCcn,
+      cmsFacilityName: h.cmsFacilityName,
     })),
     {
       headers: { "Cache-Control": "s-maxage=3600, stale-while-revalidate=86400" },

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
 import { searchCptCodes } from "@/lib/cpt-lookup";
+import { classifyMedicalCode } from "@/lib/authoritative/code-kind";
+import { searchHcpcs, searchIcd10Cm, type NlmCodeHit } from "@/lib/authoritative/nlm-clinical-tables";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -21,6 +23,10 @@ export interface ProcedureSearchResult {
 export interface ProcedureSearchResponse {
   procedures: ProcedureSearchResult[];
   noData: boolean;
+  queryKind?: "icd10-cm" | "hcpcs-level-2" | "cpt-shaped" | "text";
+  diagnosisMatches?: NlmCodeHit[];
+  hcpcsMatches?: NlmCodeHit[];
+  note?: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -38,20 +44,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  const cacheKey = `search10:${query.trim().toLowerCase()}`;
+  const cacheKey = `search11:${query.trim().toLowerCase()}`;
   const cached = await redis.get<ProcedureSearchResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
+  const codeKind = classifyMedicalCode(query);
+
+  if (codeKind === "icd10-cm") {
+    const diagnosisMatches = await searchIcd10Cm(query, 8);
+    const response: ProcedureSearchResponse = {
+      procedures: [],
+      noData: true,
+      queryKind: "icd10-cm",
+      diagnosisMatches,
+      note: "ICD-10-CM is a diagnosis code. It is not a hospital price key.",
+    };
+    await redis.set(cacheKey, response, { ex: 3600 });
+    return NextResponse.json(response);
+  }
+
   const isCptQuery = looksLikeCptCode(query);
 
-  // ── Step 1: Resolve query to CPT codes ────────────────────────────────────
+  // ── Step 1: Resolve query to CPT/HCPCS codes ────────────────────────────────────
 
   let cptCodes: string[] = [];
   const cptDescriptions = new Map<string, string>();
 
   const cptConfidence = new Map<string, number>();
 
-  if (isCptQuery) {
+  let hcpcsMatches: NlmCodeHit[] = [];
+  if (codeKind === "hcpcs-level-2") {
+    hcpcsMatches = await searchHcpcs(query, 8);
+    cptCodes = hcpcsMatches.map((m) => m.code);
+    for (const m of hcpcsMatches) {
+      cptDescriptions.set(m.code, m.description);
+      cptConfidence.set(m.code, 100);
+    }
+  } else if (isCptQuery) {
     cptCodes = [query.trim()];
     cptConfidence.set(query.trim(), 100);
   } else {
@@ -64,7 +93,12 @@ export async function POST(req: NextRequest) {
   }
 
   if (!cptCodes.length) {
-    return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
+    return NextResponse.json({
+      procedures: [],
+      noData: true,
+      queryKind: codeKind === "cpt-shaped" ? "cpt-shaped" : "text",
+      hcpcsMatches: hcpcsMatches.length ? hcpcsMatches : undefined,
+    } satisfies ProcedureSearchResponse);
   }
 
   // ── Step 2: Find procedures with basic info (no expensive counts) ─────────
@@ -78,7 +112,15 @@ export async function POST(req: NextRequest) {
   });
 
   if (procedures.length === 0) {
-    return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
+    return NextResponse.json({
+      procedures: [],
+      noData: true,
+      queryKind: codeKind === "hcpcs-level-2" ? "hcpcs-level-2" : isCptQuery ? "cpt-shaped" : "text",
+      hcpcsMatches: hcpcsMatches.length ? hcpcsMatches : undefined,
+      note: hcpcsMatches.length
+        ? "HCPCS validated against NLM Clinical Tables, but no hospital price rows are stored for this code yet."
+        : undefined,
+    } satisfies ProcedureSearchResponse);
   }
 
   // Fetch human-readable names from CptCode table for any codes we don't already have
@@ -116,7 +158,12 @@ export async function POST(req: NextRequest) {
     .sort((a, b) => b.matchScore - a.matchScore)
     .slice(0, 10);
 
-  const response: ProcedureSearchResponse = { procedures: results, noData: false };
+  const response: ProcedureSearchResponse = {
+    procedures: results,
+    noData: false,
+    queryKind: codeKind === "hcpcs-level-2" ? "hcpcs-level-2" : isCptQuery ? "cpt-shaped" : "text",
+    hcpcsMatches: hcpcsMatches.length ? hcpcsMatches : undefined,
+  };
   await redis.set(cacheKey, response, { ex: 3600 });
 
   // Fire-and-forget search log

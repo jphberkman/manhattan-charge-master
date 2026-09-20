@@ -163,3 +163,28 @@ LLM                              → interpretation only
 1. Is there an **AMA CPT license** for ShopForCare?  
 2. Should CMS **PPL** be used at all (Medicare copay UX vs. chargemaster product)?  
 3. Accept **hospital description text** as the consumer label when CPT long descriptions cannot be redistributed?
+
+---
+
+## 13. Live access (2026-09-20) and ShopForCare wiring
+
+Probed from this environment. No invented medical facts.
+
+| Source | Probe | Result | ShopForCare module |
+| --- | --- | --- | --- |
+| NLM ICD-10-CM Clinical Tables | `M17.11` | `Unilateral primary osteoarthritis, right knee` | `src/lib/authoritative/nlm-clinical-tables.ts` `GET /api/codes/lookup` |
+| NLM HCPCS Clinical Tables | `E0193` | `Powered air flotation bed` | same; keyword “knee mri” / “walker” returned **0 hits** (real miss) |
+| CDC/NCHS ICD-10-CM FY2026 listing | FTP HTML 200 | Code Descriptions ZIP is published | `listCdcIcd10CmFiles`; `npm run sync:icd10cm` |
+| CMS PPL official | `medicare.gov/.../core/prices` | **HTTP 401** “No API key found” | `cms-ppl.ts` fail-closed; no unofficial URL |
+| CMS Data API catalog | `https://data.cms.gov/data.json` | 159 datasets | `listCmsCatalog` |
+| CMS Care Compare (`xubh-q36u`) | POST `facility_id=330204` | BELLEVUE HOSPITAL CENTER | `getCareCompareByCcn`; `GET /api/hospitals/cms-profile` |
+| CMS HPT enforcement | dataset `6a3aa708-...` | JSON actions including NY | `listHptEnforcement` |
+| NLM RxTerms | `ibuprofen` | 11 displays | `searchRxTerms` (`?rx=1` on lookup) |
+
+**Care Compare CCNs we could prove** for the 13 shopper facilities: 330119 Lenox Hill, 330046 Mount Sinai West, 330101 NYP Hospital (Cornell address), 330204 Bellevue, 330240 Harlem, 330199 Metropolitan, 330214 NYU Langone Hospitals, 330024 Mount Sinai Hospital, 330270 HSS.
+
+**No distinct Care Compare row** for: Mount Sinai Morningside, NYP Lower Manhattan, NYP Columbia (do not reuse 330101), MSK (`330154` not in this dataset). Those `cmsCcn` values stay `null`.
+
+`dataset-list` at `/data-api/v1/dataset-list` is **404**; inventory is `data.json`.
+
+ICD-10-CM search does **not** populate hospital price results.

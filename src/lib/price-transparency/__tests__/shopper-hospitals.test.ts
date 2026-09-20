@@ -62,4 +62,21 @@ describe("resolveShopperHospitalId", () => {
   it("lists 13 shopper hospitals", () => {
     expect(SHOPPER_HOSPITALS).toHaveLength(13);
   });
+
+  it("only attaches CMS CCNs proven in Care Compare Hospital General Information", () => {
+    const byId = Object.fromEntries(SHOPPER_HOSPITALS.map((h) => [h.id, h.cmsCcn]));
+    expect(byId["lenox-hill"]).toBe("330119");
+    expect(byId["mount-sinai-west"]).toBe("330046");
+    expect(byId["nyp-cornell"]).toBe("330101");
+    expect(byId["hhc-bellevue"]).toBe("330204");
+    expect(byId["hhc-harlem"]).toBe("330240");
+    expect(byId["hhc-metropolitan"]).toBe("330199");
+    expect(byId["nyu-langone"]).toBe("330214");
+    expect(byId["mount-sinai"]).toBe("330024");
+    expect(byId["hss"]).toBe("330270");
+    expect(byId["mount-sinai-morningside"]).toBeNull();
+    expect(byId["nyp-lower-manhattan"]).toBeNull();
+    expect(byId["nyp-columbia"]).toBeNull();
+    expect(byId["msk"]).toBeNull();
+  });
 });

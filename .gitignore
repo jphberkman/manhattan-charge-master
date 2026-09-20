@@ -46,6 +46,10 @@ next-env.d.ts
 # generated files
 /src/generated/prisma
 
+# CDC ICD-10-CM codebook dump (run scripts/sync-cdc-icd10cm.ts)
+/data/authoritative/*.zip
+/data/authoritative/icd10cm-codes.json
+
 # database
 /prisma/dev.db
 /prisma/dev.db-journal

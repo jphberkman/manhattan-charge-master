@@ -8,6 +8,14 @@ export interface ShopperHospital {
   name: string;
   system: string;
   address: string;
+  /**
+   * CMS Certification Number as published in Care Compare Hospital General
+   * Information (dataset xubh-q36u). Null when CMS does not list a distinct CCN
+   * for this shopper campus — do not invent one.
+   */
+  cmsCcn: string | null;
+  /** Official CMS facility_name for that CCN, when known. */
+  cmsFacilityName: string | null;
 }
 
 export const SHOPPER_HOSPITALS: ShopperHospital[] = [
@@ -16,78 +24,104 @@ export const SHOPPER_HOSPITALS: ShopperHospital[] = [
     name: "Lenox Hill Hospital (Northwell Health)",
     system: "Northwell Health",
     address: "100 E 77th St, New York, NY 10075",
+    cmsCcn: "330119",
+    cmsFacilityName: "LENOX HILL HOSPITAL",
   },
   {
     id: "mount-sinai-morningside",
     name: "Mount Sinai Morningside",
     system: "Mount Sinai Health System",
     address: "1111 Amsterdam Ave, New York, NY 10025",
+    cmsCcn: null,
+    cmsFacilityName: null,
   },
   {
     id: "mount-sinai-west",
     name: "Mount Sinai West",
     system: "Mount Sinai Health System",
     address: "1000 10th Ave, New York, NY 10019",
+    cmsCcn: "330046",
+    cmsFacilityName: "MOUNT SINAI WEST",
   },
   {
     id: "nyp-lower-manhattan",
     name: "NewYork-Presbyterian Lower Manhattan Hospital",
     system: "NewYork-Presbyterian",
     address: "170 William St, New York, NY 10038",
+    cmsCcn: null,
+    cmsFacilityName: null,
   },
   {
     id: "nyp-columbia",
     name: "NewYork-Presbyterian / Columbia University Irving Medical Center",
     system: "NewYork-Presbyterian",
     address: "622 W 168th St, New York, NY 10032",
+    cmsCcn: null,
+    cmsFacilityName: null,
   },
   {
     id: "nyp-cornell",
     name: "NewYork-Presbyterian / Weill Cornell Medical Center",
     system: "NewYork-Presbyterian",
     address: "525 E 68th St, New York, NY 10065",
+    cmsCcn: "330101",
+    cmsFacilityName: "NEW YORK-PRESBYTERIAN HOSPITAL",
   },
   {
     id: "hhc-bellevue",
     name: "NYC Health + Hospitals / Bellevue",
     system: "NYC Health + Hospitals",
     address: "462 1st Ave, New York, NY 10016",
+    cmsCcn: "330204",
+    cmsFacilityName: "BELLEVUE HOSPITAL CENTER",
   },
   {
     id: "hhc-harlem",
     name: "NYC Health + Hospitals / Harlem",
     system: "NYC Health + Hospitals",
     address: "506 Lenox Ave, New York, NY 10037",
+    cmsCcn: "330240",
+    cmsFacilityName: "HARLEM HOSPITAL CENTER",
   },
   {
     id: "hhc-metropolitan",
     name: "NYC Health + Hospitals / Metropolitan",
     system: "NYC Health + Hospitals",
     address: "1901 1st Ave, New York, NY 10029",
+    cmsCcn: "330199",
+    cmsFacilityName: "METROPOLITAN HOSPITAL CENTER",
   },
   {
     id: "nyu-langone",
     name: "NYU Langone Health (Tisch Hospital & Kimmel Pavilion)",
     system: "NYU Langone Health",
     address: "550 1st Ave, New York, NY 10016",
+    cmsCcn: "330214",
+    cmsFacilityName: "NYU LANGONE HOSPITALS",
   },
   {
     id: "mount-sinai",
     name: "The Mount Sinai Hospital (Main Campus)",
     system: "Mount Sinai Health System",
     address: "One Gustave L. Levy Place, New York, NY 10029",
+    cmsCcn: "330024",
+    cmsFacilityName: "MOUNT SINAI HOSPITAL",
   },
   {
     id: "hss",
     name: "Hospital for Special Surgery (HSS)",
     system: "Hospital for Special Surgery",
     address: "535 E 70th St, New York, NY 10021",
+    cmsCcn: "330270",
+    cmsFacilityName: "HOSPITAL FOR SPECIAL SURGERY",
   },
   {
     id: "msk",
     name: "Memorial Sloan Kettering Cancer Center (MSK)",
     system: "Memorial Sloan Kettering",
     address: "1275 York Ave, New York, NY 10065",
+    cmsCcn: null,
+    cmsFacilityName: null,
   },
 ];
 
