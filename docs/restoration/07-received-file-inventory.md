@@ -43,11 +43,11 @@ Northwell sheet rename list is unchanged: only **Lenox Hill** is a shopper hospi
 | Northwell `(1).xlsx` | First Northwell xlsx |
 | NYP `(1).zip` | NYP `.zip` |
 
-### Unknown — you still need to name this
+### Unknown — founder confirmed (2026-09-20)
 
-| Current name | What we know | Missing |
+| File | Location now | Decision |
 | --- | --- | --- |
-| `chargemaster.xlsx` | Fee Schedule 1, 2024-07-17, `AMB*` codes, author Arias, Jenn | **Which hospital** |
+| `chargemaster.xlsx` (Fee Schedule 1, 2024-07-17, `AMB*` codes) | `data/mrf-drop/unknown/unknown_fee-schedule-1_2024-07-17.xlsx` | Hospital unknown. **Do not ingest. Do not attach to any of the 13.** |
 
 ### Still missing for the 13 shopper hospitals
 

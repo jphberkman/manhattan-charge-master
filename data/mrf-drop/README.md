@@ -22,6 +22,7 @@ I cannot see your laptop `Downloads` folder. Copy or attach files **here**, one 
 | `hss/` | Hospital for Special Surgery | HSS only |
 | `msk/` | Memorial Sloan Kettering | MSK only |
 | `inbox/` | Unsorted | Use if you are not sure yet |
+| `unknown/` | Hospital not identifiable | Files with no name/NPI/address, confirmed unknown |
 
 Keep original CMS filenames when you can (`{EIN}_{hospital}_standardcharges.csv` / `.json` / `.zip`).
 

@@ -42,7 +42,7 @@ async function listDir(rel: string) {
 }
 
 async function main() {
-  const folders = ["inbox", ...SHOPPER_HOSPITALS.map((h) => h.id)];
+  const folders = ["inbox", "unknown", ...SHOPPER_HOSPITALS.map((h) => h.id)];
   const rows = [];
   for (const folder of folders) {
     rows.push(...(await listDir(folder)));
