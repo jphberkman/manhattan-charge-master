@@ -1,75 +1,60 @@
 # Received files (inventory only — not ingested)
 
-Three files were attached on 2026-09-20. They sit in `data/mrf-drop/inbox/` (gitignored). **No PriceEntry rows were written.**
+Hospital identity is taken from **file contents** (CMS header, NPI, sheet names, JSON `hospital_name`). Byte-identical duplicates are noted. **No PriceEntry rows were written.**
 
-Hospital identity below is taken from **the file itself** (CMS header, NPI registry for that NPI, sheet names). Nothing was guessed from the filename alone.
+## This batch (2026-09-20, second drop)
 
-| File | Size | SHA-256 prefix | What the file says | Shopper hospital? |
-| --- | --- | --- | --- | --- |
-| `132655001-1992713564_new-york-city-health-and-hospitals-corporation_standardcharges.csv` | 0.4 MB (1,383 charge rows) | `4451469a4866` | CMS 3.0. `hospital_name` = NYC Health + Hospitals Corporation. `location_name` = **Henry J. Carter Specialty Hospital**, 1752 Park Ave. Type 2 NPI `1992713564` is registered as H+H DBA **HENRY J. CARTER SPECIALTY HOSPITAL** (long-term care hospital). Descriptions are LTACH room/per-diem CDM codes. Bellevue/Harlem/Metropolitan never appear. | **No.** Carter is not on the 13-hospital shopper list. Also far too small to be the full H+H corporation MRF. |
-| `northwell-health-combined-upload-file_for-website-5-6-2024.xlsx` | 0.4 MB | `f0ed068f003b` | Internal CDM workbook (description + list price), printed 2024-05-06. Sheet names are hospital campuses (see below). | **Lenox Hill sheet only** is in-scope, as **2024 gross list price**, not insurance. |
-| `chargemaster.xlsx` | 0.6 MB | `d9803712e2d3` | Banner: “Fee Schedule 1 Master Fee Schedule” printed 2024-07-17. Local `AMB*` codes. Excel author `Arias, Jenn`. **No hospital name, address, NPI, or EIN anywhere in the workbook.** | **No.** Same unlabeled shape as the junk Neon hospital previously named `chargemaster`. |
+| You sent | Bytes on disk | SHA-256 prefix | Same as | Hospital in the file | Shopper list? |
+| --- | --- | --- | --- | --- | --- |
+| `chargemaster.xlsx` | 0.6 MB | `d9803712e2d3` | First `chargemaster.xlsx` (identical) | **Unknown** — still no hospital name | — |
+| `132655001-1992713564_nyc-health-and-hospitals_standardcharges.zip` | 2.7 MB zip / **211 MB** CSV inside / 359,517 charge rows | `dc64c875cfb5` | Not the tiny Carter CSV (different date and size) | **Henry J. Carter Specialty Hospital** only. Header location 1752 Park Ave, NPI `1992713564`. No Bellevue/Harlem/Metropolitan rows. Updated 2025-09-05, CMS 3.0. Codes are CDM / MS-DRG / APR-DRG, not CPT. | No |
+| `135562304_new-york-eye-and-ear-infirmary-of-mount-sinai_standardcharges (1).csv` | 55 bytes | `a6637d249241` | The other 55-byte NYEE csv | Stub only: one cell “New York Eye and Ear Infirmary of Mount Sinai”. Not an MRF. | Name is NYEE; file is empty |
+| `135562304_new-york-eye-and-ear-infirmary-of-mount-sinai_standardcharges.csv` | 55 bytes | `a6637d249241` | Duplicate of the stub | Same stub | Same |
+| `northwell-health-combined-upload-file for-website-5-6-2024 (1).xlsx` | 0.4 MB | `f0ed068f003b` | First Northwell xlsx (identical) | Combined Northwell CDM; Lenox Hill sheet is the only shopper campus | Lenox Hill sheet only |
+| `133957095_NewYork-Presbyterian-Hospital_standardcharges.json (1).zip` | 8.5 MB zip / **~933 MB** JSON inside | `3fded8cf1726` | The other NYP zip (identical) | **NewYork-Presbyterian combined file.** `hospital_name` concatenates Columbia, Weill Cornell, and Brooklyn Methodist. `hospital_location` also lists Allen, Westchester, **Lower Manhattan**, Westchester Behavioral. Updated 2025-12-31, CMS JSON 2.2.1. | Contains Columbia, Cornell, and Lower Manhattan **in one file**. Do not rename as a single campus. |
+| `133957095_NewYork-Presbyterian-Hospital_standardcharges.json.zip` | 8.5 MB | `3fded8cf1726` | Duplicate of the zip above | Same NYP combined file | Same |
+| `135562304_new-york-eye-and-ear-infirmary-of-mount-sinai_standardcharges.json` | 2.2 MB / 5,393 items | `65b7c8f08156` | Real MRF (the csvs were not) | **New York Eye and Ear Infirmary of Mount Sinai**, 310 E 14th St. License `7002026H`. Updated 2025-09-22, CMS JSON 2.2.0. | **No.** NYEE is not one of the 13. Not Morningside, West, or Main campus. |
 
-## Northwell sheets (named in the file)
+## Rename list — known vs unknown
 
-| Sheet | Hospital (from sheet title) | Shopper list |
+### Known — keep / rename
+
+| Current name | Hospital | Suggested name |
 | --- | --- | --- |
-| Lenox Hill CDM Upload | Lenox Hill Hospital | Yes |
-| Manhasset CDM Upload | North Shore University Hospital (Manhasset) | No |
-| LIJ CDM Upload | Long Island Jewish | No |
-| Forest Hills CDM Upload | LIJ Forest Hills | No |
-| Valley Stream CDM Upload | Northwell Valley Stream | No |
-| Glen Cove / Plainview / South Shore / Huntington | Those Northwell campuses | No |
-| SIUH CDM Upload | Staten Island University Hospital | No |
-| Phelps / NWH / Peconic / Mather | Phelps, Northern Westchester, Peconic, Mather | No |
+| `132655001-1992713564_new-york-city-health-and-hospitals-corporation_standardcharges.csv` | Carter (small 2026-09-05 slice, 1,383 rows) | `hhc-carter_standardcharges_2026-09-05_partial.csv` |
+| `132655001-1992713564_nyc-health-and-hospitals_standardcharges.zip` | Carter (full 2025-09-05 MRF, 359k rows) | `hhc-carter_standardcharges_2025-09-05.zip` |
+| `135562304_new-york-eye-and-ear-infirmary-of-mount-sinai_standardcharges.json` | NY Eye and Ear (Mount Sinai) | `nyee-mount-sinai_standardcharges_2025-09-22.json` |
+| `133957095_NewYork-Presbyterian-Hospital_standardcharges.json.zip` | NYP **multi-campus** (Columbia + Cornell + Lower Manhattan + others) | `nyp-combined_columbia-cornell-lower-manhattan-plus_standardcharges_2025-12-31.json.zip` |
+| `northwell-health-combined-upload-file_for-website-5-6-2024.xlsx` | Northwell combined CDM (see sheet list) | `northwell-combined-cdm-2024-05-06.xlsx` |
 
-## Rename list (known vs unknown)
+Northwell sheet rename list is unchanged: only **Lenox Hill** is a shopper hospital.
 
-Use this when you rename the copies in Downloads. Folder names match `data/mrf-drop/`.
+### Known name, but not a usable MRF
 
-### Known hospital — standalone file
+| Current name | Why |
+| --- | --- |
+| Both `135562304_…_standardcharges.csv` files (55 bytes) | Hospital name only. Discard or ignore; use the JSON. |
 
-| What you sent | Hospital | Suggested name |
+### Duplicate — do not keep a second copy
+
+| Current name | Duplicate of |
+| --- | --- |
+| `chargemaster.xlsx` (second attach) | First `chargemaster.xlsx` |
+| Northwell `(1).xlsx` | First Northwell xlsx |
+| NYP `(1).zip` | NYP `.zip` |
+
+### Unknown — you still need to name this
+
+| Current name | What we know | Missing |
 | --- | --- | --- |
-| `132655001-1992713564_new-york-city-health-and-hospitals-corporation_standardcharges.csv` | **Henry J. Carter Specialty Hospital** (H+H LTACH, 1752 Park Ave). Not Bellevue / Harlem / Metropolitan. | `hhc-carter_132655001-1992713564_henry-j-carter-specialty-hospital_standardcharges.csv` |
+| `chargemaster.xlsx` | Fee Schedule 1, 2024-07-17, `AMB*` codes, author Arias, Jenn | **Which hospital** |
 
-Carter is **not** one of the 13 shopper hospitals. Keep it out of `hhc-bellevue/`, `hhc-harlem/`, and `hhc-metropolitan/`.
+### Still missing for the 13 shopper hospitals
 
-### Known hospitals — sheets inside one Northwell workbook
-
-File: `northwell-health-combined-upload-file_for-website-5-6-2024.xlsx`  
-If you keep it as one workbook, rename the file to `northwell-combined-cdm-2024-05-06.xlsx`.  
-If you export each sheet, use:
-
-| Sheet in the workbook | Hospital | Shopper list? | Suggested exported filename |
-| --- | --- | --- | --- |
-| Lenox Hill CDM Upload | Lenox Hill Hospital | Yes | `lenox-hill_cdm-list-price_2024-05-06.xlsx` |
-| Manhasset CDM Upload | North Shore University Hospital (Manhasset) | No | `northwell-manhasset_cdm-list-price_2024-05-06.xlsx` |
-| LIJ CDM Upload | Long Island Jewish Medical Center | No | `northwell-lij_cdm-list-price_2024-05-06.xlsx` |
-| Forest Hills CDM Upload | Northwell / LIJ Forest Hills | No | `northwell-forest-hills_cdm-list-price_2024-05-06.xlsx` |
-| Valley Stream CDM Upload | Northwell Valley Stream | No | `northwell-valley-stream_cdm-list-price_2024-05-06.xlsx` |
-| Glen Cove CDM Upload | Glen Cove Hospital | No | `northwell-glen-cove_cdm-list-price_2024-05-06.xlsx` |
-| Plainview CDM Upload | Plainview Hospital | No | `northwell-plainview_cdm-list-price_2024-05-06.xlsx` |
-| South Shore CDM Upload | South Shore University Hospital | No | `northwell-south-shore_cdm-list-price_2024-05-06.xlsx` |
-| Huntington CDM Upload | Huntington Hospital | No | `northwell-huntington_cdm-list-price_2024-05-06.xlsx` |
-| SIUH CDM Upload | Staten Island University Hospital | No | `northwell-siuh_cdm-list-price_2024-05-06.xlsx` |
-| Phelps CDM Upload | Phelps Hospital | No | `northwell-phelps_cdm-list-price_2024-05-06.xlsx` |
-| NWH CDM Upload | Northern Westchester Hospital | No | `northwell-northern-westchester_cdm-list-price_2024-05-06.xlsx` |
-| Peconic CDM Upload | Peconic Bay Medical Center | No | `northwell-peconic_cdm-list-price_2024-05-06.xlsx` |
-| Mather CDM Upload | Mather Hospital | No | `northwell-mather_cdm-list-price_2024-05-06.xlsx` |
-
-Only the Lenox Hill export belongs under `data/mrf-drop/lenox-hill/`. It is still a **2024 gross list price** CDM, not a CMS payer MRF.
-
-### Unknown hospital — needs you to name it
-
-| What you sent | What we know | What we do not know |
-| --- | --- | --- |
-| `chargemaster.xlsx` | “Fee Schedule 1 Master Fee Schedule”, printed 2024-07-17, local `AMB*` codes, Excel author Arias, Jenn (~15,292 rows) | **Which hospital.** No name, address, NPI, or EIN in the file. |
-
-Rename that one to `{hospital}_fee-schedule-1_2024-07-17.xlsx` once you know the hospital (for example `hss_…` or `nyu-langone_…`). Until then, leave it as unknown.
-
-### Still missing (no file yet)
-
-lenox-hill (CMS MRF), mount-sinai-morningside, mount-sinai-west, nyp-lower-manhattan, nyp-columbia, nyp-cornell, hhc-bellevue, hhc-harlem, hhc-metropolitan, nyu-langone, mount-sinai, hss, msk.
-
-Per-facility CMS `*_standardcharges.*` files for the 13 shopper hospitals. The H+H file we have is Carter, not Bellevue/Harlem/Metropolitan. If the Downloads copies are much larger than ~0.5 MB, re-send the full files.
+| Shopper folder | Status |
+| --- | --- |
+| `lenox-hill/` | Only a 2024 CDM **sheet** inside Northwell xlsx (list price). No CMS MRF. |
+| `nyp-columbia/` `nyp-cornell/` `nyp-lower-manhattan/` | Present **together** in the NYP combined JSON. Not split. |
+| `hhc-bellevue/` `hhc-harlem/` `hhc-metropolitan/` | Missing. H+H files are Carter. |
+| `mount-sinai/` `mount-sinai-morningside/` `mount-sinai-west/` | Missing. NYEE is a different Mount Sinai facility. |
+| `nyu-langone/` `hss/` `msk/` | Missing. |
