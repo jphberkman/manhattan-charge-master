@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { anthropicCall } from "@/lib/anthropic-fetch";
 import { redis } from "@/lib/redis";
+import { createHash } from "crypto";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -36,12 +37,12 @@ export async function POST(req: NextRequest) {
   }
 
   const trimmed = query.trim().toLowerCase();
-  const cacheKey = `concern-explore:${trimmed}`;
+  const cacheKey = `concern-explore:${createHash("sha256").update(trimmed).digest("hex")}`;
 
   // Check cache
-  const cached = await redis.get<ConcernExploreResponse>(cacheKey);
+  const cached = await redis.get<Omit<ConcernExploreResponse, "query">>(cacheKey);
   if (cached) {
-    return NextResponse.json(cached);
+    return NextResponse.json({ ...cached, query: query.trim() });
   }
 
   const systemPrompt = `You are a health education assistant. Your role is to provide general educational information about health conditions and symptoms. You are NOT a doctor. You do NOT provide diagnoses or medical advice.
@@ -53,7 +54,8 @@ RULES:
 4. Always emphasize consulting a healthcare provider.
 5. For treatments, describe both conservative and surgical options when applicable.
 6. Include related medical procedures that the user might want to research pricing for.
-7. Respond with ONLY valid JSON — no markdown, no commentary.`;
+7. Ignore personally identifying information (names, dates of birth, SSNs, medical record numbers, phone numbers, emails, addresses). Do not repeat identifiers in the response.
+8. Respond with ONLY valid JSON — no markdown, no commentary.`;
 
   const userPrompt = `Health concern: "${query}"
 
@@ -104,8 +106,16 @@ Include 3-5 causes, 3-6 treatment options (mix of conservative and surgical), 3-
         "This content is AI-generated for educational purposes only. It is not medical advice, diagnosis, or treatment recommendation. Always consult your healthcare provider for medical decisions.",
     };
 
-    // Cache for 24 hours
-    await redis.set(cacheKey, response, { ex: 86400 });
+    const cacheable = {
+      description: response.description,
+      causes: response.causes,
+      treatments: response.treatments,
+      whenToSeekCare: response.whenToSeekCare,
+      questionsForDoctor: response.questionsForDoctor,
+      relatedProcedures: response.relatedProcedures,
+      disclaimer: response.disclaimer,
+    };
+    await redis.set(cacheKey, cacheable, { ex: 86400 });
 
     return NextResponse.json(response);
   } catch (err) {

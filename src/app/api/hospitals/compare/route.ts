@@ -4,6 +4,7 @@ import { Prisma } from "@/generated/prisma";
 import { redis } from "@/lib/redis";
 import { getBestMedicareBenchmark, getMedicareRateAsync } from "@/lib/medicare";
 import type { MedicareBenchmark } from "@/lib/medicare";
+import { sanitizeSearchQuery } from "@/lib/compliance/phi";
 
 export const maxDuration = 60;
 
@@ -356,7 +357,7 @@ export async function GET(req: NextRequest) {
   // Fire-and-forget search log
   prisma.searchLog.create({
     data: {
-      query: cptCode,
+      query: sanitizeSearchQuery(cptCode),
       endpoint: "hospitals/compare",
       resultCount: entries.length,
       cptCode,

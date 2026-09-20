@@ -146,6 +146,20 @@ model SearchLog {
   @@index([query])
 }
 
+/// Append-only SOC 2 / HIPAA audit trail. Metadata must be PHI-redacted before insert.
+model AuditEvent {
+  id        String   @id @default(cuid())
+  action    String
+  actor     String   @default("system")
+  resource  String   @default("")
+  metadata  String   @default("{}")
+  ipHash    String   @default("")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action])
+}
+
 /// CMS inpatient/outpatient charge data (from CMS Provider Utilization & Payment Data).
 /// Aggregates average charges, total payments, and Medicare payments per DRG per provider.
 model CmsChargeData {

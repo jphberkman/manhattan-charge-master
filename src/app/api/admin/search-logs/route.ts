@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/auth";
+import { redactPhi } from "@/lib/compliance/phi";
 
 export const dynamic = "force-dynamic";
 
@@ -36,5 +37,11 @@ export async function GET(req: NextRequest) {
     take: limit,
   });
 
-  return NextResponse.json(logs);
+  return NextResponse.json(
+    logs.map((log) => ({
+      ...log,
+      query: redactPhi(log.query),
+      insurerName: log.insurerName ? redactPhi(log.insurerName) : log.insurerName,
+    })),
+  );
 }
