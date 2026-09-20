@@ -47,16 +47,19 @@ export interface PhysicianResponse {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const SHORT_NAMES: Record<string, string> = {
-  "nyu-langone":      "NYU Langone",
-  "nyu-orthopedic":   "NYU Langone Orthopedic",
-  "nyp-cornell":      "NYP / Weill Cornell",
-  "nyp-columbia":     "NYP / Columbia",
-  "mount-sinai":      "Mount Sinai",
+  "nyu-langone": "NYU Langone (Tisch & Kimmel)",
+  "nyp-cornell": "NYP / Weill Cornell",
+  "nyp-columbia": "NYP / Columbia",
+  "nyp-lower-manhattan": "NYP Lower Manhattan",
+  "mount-sinai": "Mount Sinai (Main)",
   "mount-sinai-west": "Mount Sinai West",
-  "msk":              "Memorial Sloan Kettering",
-  "lenox-hill":       "Lenox Hill (Northwell)",
-  "hss":              "Hospital for Special Surgery",
-  "bellevue":         "Bellevue Hospital",
+  "mount-sinai-morningside": "Mount Sinai Morningside",
+  "msk": "Memorial Sloan Kettering",
+  "lenox-hill": "Lenox Hill (Northwell)",
+  "hss": "Hospital for Special Surgery",
+  "hhc-bellevue": "H+H / Bellevue",
+  "hhc-harlem": "H+H / Harlem",
+  "hhc-metropolitan": "H+H / Metropolitan",
 };
 
 /**

@@ -126,6 +126,14 @@ async function openSource(sourceFile: string): Promise<Readable> {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
+  if (process.env.ALLOW_DESTRUCTIVE_SEED !== "1") {
+    console.error(
+      "Refusing to run: this seeder deletes all prices for a hospital, then keeps only 13 CPT codes.\n" +
+        "Set ALLOW_DESTRUCTIVE_SEED=1 only on a disposable database.",
+    );
+    process.exit(1);
+  }
+
   const target = process.argv[2];
   console.log("🏥 Seeding hospital price data…\n");
 

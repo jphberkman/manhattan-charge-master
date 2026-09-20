@@ -188,6 +188,31 @@ model ContentHistory {
   @@index([changedAt])
 }
 
+/// Inventory of hospital machine-readable files. Additive; does not replace PriceEntry.
+model SourceFile {
+  id             String    @id @default(cuid())
+  filename       String
+  sha256         String?
+  bytes          Int?
+  hospitalKey    String?
+  sourceUrl      String?
+  format         String?
+  parser         String?
+  status         String    @default("discovered")
+  rowsDiscovered Int       @default(0)
+  rowsParsed     Int       @default(0)
+  rowsRejected   Int       @default(0)
+  rowsInserted   Int       @default(0)
+  warningCount   Int       @default(0)
+  errorMessage   String?
+  ingestedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
+  @@index([filename])
+}
+
 /// NUBC Revenue Codes — maps 4-digit facility charge categories to CPT procedures.
 /// Hospitals often list facility fees by revenue code (e.g. 0360 = Operating Room)
 /// rather than CPT code. This table links them for price aggregation.
