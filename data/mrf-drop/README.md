@@ -4,6 +4,19 @@ This is the **only** place ShopForCare should receive hospital chargemaster file
 
 I cannot see your laptop `Downloads` folder. Copy or attach files **here**, one hospital per directory. Do not commit the files to git (they are gitignored). Do not upload multi-GB files through the website upload page.
 
+## Chat attach limit
+
+Cursor chat attachments stop at **about 10 MB**. That is why the large MRFs failed. Do **not** use the ShopForCare website upload for those either (serverless timeout).
+
+### How to send files larger than 10 MB
+
+1. **Best for files you already downloaded:** Google Drive (or Dropbox).
+   - Upload the file (or one zip per hospital).
+   - Share: **Anyone with the link can view**.
+   - Paste the link in chat. Direct file links work; folders work if each hospital is named.
+2. **I can pull the hospital’s public MRF URL** when it is still live (no upload).
+3. If you have the git repo on the same Mac, copy into `data/mrf-drop/<hospital-id>/` locally. Do not `git add` the MRFs.
+
 ## Folders (13 shopper hospitals)
 
 | Folder | Hospital | Put in this folder |
@@ -32,14 +45,6 @@ Keep original CMS filenames when you can (`{EIN}_{hospital}_standardcharges.csv`
 2. **Do not put NYU Orthopedic under `nyu-langone/`.**
 3. Website `POST /api/upload` is for modest spreadsheets (serverless ~2 minute cap). Large MRFs stay in this drop and get ingested offline.
 4. Nothing here is ingested until we inventory the file (name, size, hash) and you say go.
-
-## How to get files to the engineer
-
-Pick whichever is easiest:
-
-1. **Cursor agent chat** — attach the files (or a zip per hospital) to the next message.
-2. **This folder on a machine that has the repo** — copy from Downloads into the matching directory, then tell the agent they are in place.
-3. **Shared drive** — Google Drive / Dropbox folder with the same 13 names; paste the link. I still cannot open your local Downloads path.
 
 When files land, run:
 

@@ -14,7 +14,8 @@
     "db:reset": "npx prisma migrate reset --force",
     "seed:prices": "NODE_OPTIONS='--require ./node-compat.cjs' npx tsx src/lib/price-transparency/seed-prices.ts",
     "sync:icd10cm": "npx tsx scripts/sync-cdc-icd10cm.ts",
-    "inventory:mrf": "npx tsx scripts/inventory-mrf-drop.ts"
+    "inventory:mrf": "npx tsx scripts/inventory-mrf-drop.ts",
+    "fetch:public-mrfs": "bash scripts/fetch-public-mrfs.sh"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "1.2.12",
