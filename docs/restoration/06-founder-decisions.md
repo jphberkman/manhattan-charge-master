@@ -26,7 +26,9 @@ Until files are re-uploaded **per facility**, some of these will correctly show 
 
 Re-upload the full set. Do not treat March–April 2026 `/tmp` paths as recoverable source files.
 
-Serverless upload still cannot swallow multi-GB files. Use the upload API for moderate files; large MRFs still need the offline seeder with inventory logging. Next step after this round: a documented drop folder + one-file reconciliation.
+Serverless upload still cannot swallow multi-GB files. Use the upload API for moderate files; large MRFs still need the offline seeder with inventory logging.
+
+**Drop folder:** `data/mrf-drop/<hospital-id>/` (see `data/mrf-drop/README.md`). The cloud agent cannot read a laptop `Downloads` folder. Copy or attach files into that tree, or share a Drive link with the same 13 folder names. Run `npm run inventory:mrf` to list files without ingesting.
 
 ## CPT / AMA
 

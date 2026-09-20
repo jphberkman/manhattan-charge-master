@@ -50,6 +50,12 @@ next-env.d.ts
 /data/authoritative/*.zip
 /data/authoritative/icd10cm-codes.json
 
+# Hospital MRFs — never commit chargemasters
+/data/mrf-drop/**
+!/data/mrf-drop/README.md
+!/data/mrf-drop/**/
+!/data/mrf-drop/**/.gitkeep
+
 # database
 /prisma/dev.db
 /prisma/dev.db-journal
