@@ -30,6 +30,8 @@ Serverless upload still cannot swallow multi-GB files. Use the upload API for mo
 
 **Drop folder:** `data/mrf-drop/<hospital-id>/` (see `data/mrf-drop/README.md`). The cloud agent cannot read a laptop `Downloads` folder. Copy or attach files into that tree, or share a Drive link with the same 13 folder names. Run `npm run inventory:mrf` to list files without ingesting.
 
+First three attachments are inventoried in `docs/restoration/07-received-file-inventory.md`. None were ingested.
+
 ## CPT / AMA
 
 There is **no AMA license**. CPT long descriptions are **not** a public unlicensed API. CMS Procedure Price Lookup also requires AMA license + API key.
