@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { verifySession } from "@/lib/auth";
+import { applySecurityHeaders } from "@/lib/compliance/security-headers";
+import { isValidSiteAccessCookie } from "@/lib/compliance/cookies";
+import { assertProductionSecrets } from "@/lib/compliance/secrets";
 
 // Paths that require the site-wide password
 const SITE_GATED_PATHS = [
@@ -18,6 +21,8 @@ const SITE_GATED_PATHS = [
 ];
 
 export async function middleware(request: NextRequest) {
+  assertProductionSecrets();
+
   const { pathname } = request.nextUrl;
 
   // ── Site-wide password gate ──────────────────────────────────────────────
@@ -26,15 +31,17 @@ export async function middleware(request: NextRequest) {
     const isSiteGated = SITE_GATED_PATHS.some((p) => pathname.startsWith(p));
     if (isSiteGated) {
       const cookie = request.cookies.get("site-access");
-      const isAuthed = cookie?.value === sitePassword;
+      const isAuthed = isValidSiteAccessCookie(cookie?.value, sitePassword);
       if (!isAuthed) {
         // API routes return 401; page routes redirect to /login
         if (pathname.startsWith("/api/")) {
-          return NextResponse.json({ error: "Access denied" }, { status: 401 });
+          return applySecurityHeaders(
+            NextResponse.json({ error: "Access denied" }, { status: 401 }),
+          );
         }
         const loginUrl = new URL("/login", request.url);
         loginUrl.searchParams.set("next", pathname);
-        return NextResponse.redirect(loginUrl);
+        return applySecurityHeaders(NextResponse.redirect(loginUrl));
       }
     }
   }
@@ -44,10 +51,12 @@ export async function middleware(request: NextRequest) {
   const protectedPaths = ["/api/projects", "/api/filesystem"];
   const isProtectedPath = protectedPaths.some((path) => pathname.startsWith(path));
   if (isProtectedPath && !session) {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    return applySecurityHeaders(
+      NextResponse.json({ error: "Authentication required" }, { status: 401 }),
+    );
   }
 
-  return NextResponse.next();
+  return applySecurityHeaders(NextResponse.next());
 }
 
 export const config = {

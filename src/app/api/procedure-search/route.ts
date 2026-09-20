@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
 import { searchCptCodes } from "@/lib/cpt-lookup";
+import { sanitizeSearchQuery } from "@/lib/compliance/phi";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -122,7 +123,7 @@ export async function POST(req: NextRequest) {
   // Fire-and-forget search log
   prisma.searchLog.create({
     data: {
-      query: query.trim(),
+      query: sanitizeSearchQuery(query.trim()),
       endpoint: "procedure-search",
       resultCount: results.length,
       cptCode: results[0]?.cptCode ?? null,

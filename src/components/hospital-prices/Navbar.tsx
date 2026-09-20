@@ -11,12 +11,14 @@ import {
   Menu,
   X,
   BadgeCheck,
+  ShieldCheck,
 } from "lucide-react";
 
 const navLinks = [
   { href: "/hospital-prices/search", label: "Search", icon: Search },
   { href: "/hospital-prices/explore", label: "Concern Explorer", icon: Compass },
   { href: "/hospital-prices/about", label: "About", icon: Info },
+  { href: "/hospital-prices/compliance", label: "Compliance", icon: ShieldCheck },
 ] as const;
 
 export function Navbar() {

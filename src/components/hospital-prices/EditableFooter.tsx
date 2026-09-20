@@ -32,6 +32,16 @@ export function EditableFooter() {
                 </Link>
               </li>
               <li>
+                <Link href="/hospital-prices/compliance" className="hover:text-white">
+                  SOC 2 &amp; HIPAA
+                </Link>
+              </li>
+              <li>
+                <Link href="/hospital-prices/privacy" className="hover:text-white">
+                  Privacy
+                </Link>
+              </li>
+              <li>
                 <Link href="/hospital-prices/explore" className="hover:text-white">
                   Concern Explorer
                 </Link>

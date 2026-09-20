@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { anthropicStream } from "@/lib/anthropic-fetch";
 import { redis } from "@/lib/redis";
 import { searchCptCodes } from "@/lib/cpt-lookup";
+import { sanitizeSearchQuery } from "@/lib/compliance/phi";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -518,7 +519,7 @@ and follow-up visits.`;
       // Fire-and-forget search log
       prisma.searchLog.create({
         data: {
-          query: query.trim(),
+          query: sanitizeSearchQuery(query.trim()),
           endpoint: "procedure-breakdown",
           resultCount: enrichedComponents.length,
           cptCode: enrichedBreakdown.cptCode ?? null,

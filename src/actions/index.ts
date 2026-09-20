@@ -3,6 +3,7 @@
 import bcrypt from "bcrypt";
 import { prisma } from "@/lib/prisma";
 import { createSession, deleteSession, getSession } from "@/lib/auth";
+import { recordAuditEvent } from "@/lib/compliance/audit-log";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -50,6 +51,7 @@ export async function signUp(
 
     // Create session
     await createSession(user.id, user.email);
+    recordAuditEvent({ action: "auth.signup", actor: user.id });
 
     revalidatePath("/");
     return { success: true };
@@ -87,6 +89,7 @@ export async function signIn(
 
     // Create session
     await createSession(user.id, user.email);
+    recordAuditEvent({ action: "auth.signin", actor: user.id });
 
     revalidatePath("/");
     return { success: true };

@@ -2,10 +2,9 @@ import "server-only";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
+import { getJwtSecret } from "@/lib/compliance/secrets";
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "development-secret-key"
-);
+const JWT_SECRET = getJwtSecret();
 
 const COOKIE_NAME = "auth-token";
 

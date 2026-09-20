@@ -1,5 +1,6 @@
 import { isAdminRequest } from "@/lib/admin-auth";
 import { CONTENT_REGISTRY, type ContentField } from "@/lib/content-registry";
+import { recordAuditEvent } from "@/lib/compliance/audit-log";
 import { prisma } from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -59,6 +60,13 @@ export async function PUT(req: NextRequest) {
       data: { key, oldValue, newValue: value, changedBy: "admin" },
     });
   }
+
+  recordAuditEvent({
+    action: "admin.content.update",
+    actor: "admin",
+    resource: key,
+    request: req,
+  });
 
   return NextResponse.json({ ok: true, history: historyEntry });
 }

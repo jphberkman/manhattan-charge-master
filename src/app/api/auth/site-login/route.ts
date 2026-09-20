@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { sessionCookieOptions, siteAccessToken } from "@/lib/compliance/cookies";
 
 export async function POST(req: NextRequest) {
   const { password } = await req.json();
   const sitePassword = process.env.SITE_PASSWORD;
+  const cookieOpts = sessionCookieOptions(60 * 60 * 24 * 30);
 
   if (!sitePassword) {
     // No password set — allow access (local dev)
     const res = NextResponse.json({ ok: true });
-    res.cookies.set("site-access", "open", { httpOnly: true, path: "/", maxAge: 60 * 60 * 24 * 30 });
+    res.cookies.set("site-access", "open", cookieOpts);
     return res;
   }
 
@@ -16,11 +18,6 @@ export async function POST(req: NextRequest) {
   }
 
   const res = NextResponse.json({ ok: true });
-  res.cookies.set("site-access", sitePassword, {
-    httpOnly: true,
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30, // 30 days
-    sameSite: "lax",
-  });
+  res.cookies.set("site-access", siteAccessToken(sitePassword), cookieOpts);
   return res;
 }

@@ -4,6 +4,7 @@ import JSZip from "jszip";
 import { prisma } from "@/lib/prisma";
 import { anthropicCall } from "@/lib/anthropic-fetch";
 import { getMedicareRate } from "@/lib/medicare";
+import { recordAuditEvent } from "@/lib/compliance/audit-log";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -550,6 +551,12 @@ async function processXlsx(buffer: Buffer, filename: string) {
 export async function POST(req: NextRequest) {
   try {
     const filename = req.headers.get("x-filename") ?? "upload.csv";
+    recordAuditEvent({
+      action: "admin.data.upload",
+      actor: "admin",
+      resource: filename,
+      request: req,
+    });
     const ext = filename.split(".").pop()?.toLowerCase();
 
     if (!req.body) return NextResponse.json({ error: "No file provided" }, { status: 400 });

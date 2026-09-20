@@ -4,6 +4,10 @@ import { Analytics } from "@vercel/analytics/next";
 import Script from "next/script";
 import "./globals.css";
 
+const GA_MEASUREMENT_ID = "G-391XKGFTQ0";
+const googleAnalyticsEnabled =
+  process.env.NEXT_PUBLIC_ENABLE_GOOGLE_ANALYTICS === "true";
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -34,18 +38,26 @@ export default function RootLayout({
       >
         {children}
         <Analytics />
-        <Script src="https://www.googletagmanager.com/gtag/js?id=G-391XKGFTQ0" strategy="afterInteractive" />
-        <Script id="google-analytics" strategy="afterInteractive">
-          {`
+        {googleAnalyticsEnabled ? (
+          <>
+            <Script
+              src={`https://www.googletagmanager.com/gtag/js?id=${GA_MEASUREMENT_ID}`}
+              strategy="afterInteractive"
+            />
+            <Script id="google-analytics" strategy="afterInteractive">
+              {`
             window.dataLayer = window.dataLayer || [];
             function gtag(){dataLayer.push(arguments);}
             gtag('js', new Date());
-            gtag('config', 'G-391XKGFTQ0', {
+            gtag('config', '${GA_MEASUREMENT_ID}', {
               page_title: document.title,
-              send_page_view: true
+              send_page_view: true,
+              anonymize_ip: true
             });
           `}
-        </Script>
+            </Script>
+          </>
+        ) : null}
       </body>
     </html>
   );
