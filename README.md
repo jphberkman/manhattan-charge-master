@@ -65,3 +65,9 @@ Open [http://localhost:3000](http://localhost:3000)
 - Prisma with SQLite
 - Anthropic Claude AI
 - Vercel AI SDK
+
+## ShopForCare price index
+
+Hospital chargemasters live in the Neon warehouse (`shopforcare-price-transparency`). The app queries the skinny `PriceIndex` table, not those files.
+
+See **[docs/warehouse.md](docs/warehouse.md)** for warehouse vs search index, env vars for Vercel `manhattan-charge-master-uq6x`, and how to re-run `npm run ingest:lake`.

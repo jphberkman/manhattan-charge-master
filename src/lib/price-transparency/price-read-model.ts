@@ -1,6 +1,7 @@
 /**
- * Consumer read model over the 2026-09 per-campus ingest.
- * Reads PriceSummary/ServiceDescription only — never scans PriceEntry.
+ * Consumer read model.
+ * Prefers PriceIndex (Neon warehouse skinny table). Falls back to PriceSummary.
+ * Never scans PriceEntry or opens warehouse objects on the request path.
  */
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma";
@@ -14,6 +15,7 @@ export interface HospitalPriceSummary {
   minDollars: number | null;
   maxDollars: number | null;
   latestAsOf: string | null;
+  warehouseObjectKey?: string;
 }
 
 export interface DescriptionSearchHit {
@@ -26,8 +28,37 @@ export interface DescriptionSearchHit {
 
 const SHOPPER_IDS = SHOPPER_HOSPITALS.map((h) => h.id);
 
-/** Per-shopper-hospital price summary for one billing code. */
+function dollars(cents: number | null | undefined): number | null {
+  return cents == null ? null : Math.round(cents / 100);
+}
+
+/** Per-shopper-hospital price summary for one billing code. Prefers PriceIndex (warehouse). */
 export async function getPriceSummariesForCode(code: string): Promise<HospitalPriceSummary[]> {
+  const indexRows = await prisma.priceIndex.findMany({
+    where: { code, hospitalId: { in: SHOPPER_IDS } },
+  });
+  if (indexRows.length) {
+    return indexRows.map((r) => {
+      const list = dollars(r.listCents);
+      const cash = dollars(r.cashCents);
+      const neg = dollars(r.negotiatedCents);
+      const minD = dollars(r.negotiatedMinCents);
+      const maxD = dollars(r.negotiatedMaxCents);
+      const mins = [list, cash, neg, minD].filter((n): n is number => n != null);
+      const maxes = [list, cash, neg, maxD].filter((n): n is number => n != null);
+      return {
+        hospitalId: r.hospitalId,
+        grossMedian: list,
+        cashMedian: cash,
+        negotiatedMedianByClass: neg != null ? { commercial: neg } : {},
+        minDollars: mins.length ? Math.min(...mins) : null,
+        maxDollars: maxes.length ? Math.max(...maxes) : null,
+        latestAsOf: r.asOf?.toISOString() ?? null,
+        warehouseObjectKey: r.objectKey,
+      };
+    });
+  }
+
   const rows = await prisma.priceSummary.findMany({
     where: { code, hospitalId: { in: SHOPPER_IDS } },
   });
@@ -127,10 +158,17 @@ export async function searchServiceDescriptions(
 /** Does any fresh summary exist for these codes? Returns the subset that do. */
 export async function codesWithFreshPrices(codes: string[]): Promise<Set<string>> {
   if (!codes.length) return new Set();
-  const rows = await prisma.priceSummary.findMany({
-    where: { code: { in: codes }, hospitalId: { in: SHOPPER_IDS } },
-    select: { code: true },
-    distinct: ["code"],
-  });
-  return new Set(rows.map((r) => r.code));
+  const [indexRows, summaryRows] = await Promise.all([
+    prisma.priceIndex.findMany({
+      where: { code: { in: codes }, hospitalId: { in: SHOPPER_IDS } },
+      select: { code: true },
+      distinct: ["code"],
+    }),
+    prisma.priceSummary.findMany({
+      where: { code: { in: codes }, hospitalId: { in: SHOPPER_IDS } },
+      select: { code: true },
+      distinct: ["code"],
+    }),
+  ]);
+  return new Set([...indexRows, ...summaryRows].map((r) => r.code));
 }

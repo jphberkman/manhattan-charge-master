@@ -30,6 +30,8 @@ export interface HospitalComparisonEntry {
   /** De-identified min/max across this hospital's published rates for the code. */
   publishedMin: number | null;
   publishedMax: number | null;
+  /** Neon warehouse object key when the skinny PriceIndex supplied this row. */
+  warehouseObjectKey?: string;
 }
 
 export interface CompareResponse {
@@ -59,7 +61,7 @@ export async function GET(req: NextRequest) {
 
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
-  const cacheKey = `compare19:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance ?? "none"}`;
+  const cacheKey = `compare20:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance ?? "none"}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached, {
     headers: { "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800" },
@@ -106,6 +108,7 @@ export async function GET(req: NextRequest) {
       rank: 0,
       publishedMin: s.minDollars,
       publishedMax: s.maxDollars,
+      warehouseObjectKey: s.warehouseObjectKey,
     });
   }
 
