@@ -66,17 +66,35 @@ model Procedure {
 model PriceEntry {
   id           String   @id @default(cuid())
   hospitalId   String
-  procedureId  String
+  procedureId  String?
   payerName    String
   payerType    String
   priceInCents Int
   priceType    String
   rawCode      String   @default("")
-  source       String   @default("mrf")  // "mrf" | "cms" | "upload" | "dolthub"
+  source       String   @default("mrf")  // "mrf" | "cms" | "upload" | "dolthub" | "mrf-v2"
   createdAt    DateTime @default(now())
 
-  hospital     Hospital  @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
-  procedure    Procedure @relation(fields: [procedureId], references: [id], onDelete: Cascade)
+  // ── Provenance + full-fidelity fields (2026-09 re-ingest; null on legacy rows) ──
+  sourceFileId String?
+  asOf         DateTime?
+  /** Primary billing code from the file (CPT/HCPCS/DRG/CDM/…). */
+  code         String?
+  /** cpt-shaped | hcpcs-level-2 | ms-drg | apr-drg | cdm | rc | ndc | local | unknown */
+  codeKind     String?
+  /** Hospital's own service description (consumer display text). */
+  description  String?
+  planName     String?
+  methodology  String?
+  billingClass String?
+  setting      String?
+  /** De-identified min/max and median for this item, when the file publishes them. */
+  minCents     Int?
+  maxCents     Int?
+  medianCents  Int?
+
+  hospital     Hospital   @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  procedure    Procedure? @relation(fields: [procedureId], references: [id], onDelete: Cascade)
 
   @@index([procedureId])
   @@index([procedureId, payerType])
@@ -86,6 +104,42 @@ model PriceEntry {
   @@index([payerType, priceType])
   @@index([procedureId, priceType, priceInCents])
   @@index([hospitalId, payerType, priceType])
+  @@index([hospitalId, code])
+}
+
+/// Distinct (hospital, code, description) from fresh per-campus ingest.
+/// Search surface for full-text over hospital service descriptions.
+model ServiceDescription {
+  id           String  @id @default(cuid())
+  hospitalId   String
+  code         String
+  codeKind     String
+  description  String
+  sourceFileId String?
+
+  @@unique([hospitalId, code, description])
+  @@index([hospitalId])
+  @@index([code])
+}
+
+/// Precomputed aggregates per (hospital, code, payer class, price type).
+/// Consumer reads hit this table, never 45M PriceEntry rows.
+model PriceSummary {
+  id          String    @id @default(cuid())
+  hospitalId  String
+  code        String
+  codeKind    String
+  payerClass  String    // gross | cash | commercial | medicare | medicaid | other
+  priceType   String    // gross | cash | negotiated
+  minCents    Int
+  medianCents Int
+  maxCents    Int
+  count       Int
+  latestAsOf  DateTime?
+
+  @@unique([hospitalId, code, payerClass, priceType])
+  @@index([code])
+  @@index([hospitalId])
 }
 
 model CptCode {
@@ -198,6 +252,12 @@ model SourceFile {
   sourceUrl      String?
   format         String?
   parser         String?
+  /** Identity read from the file header — never from the filename. */
+  headerName     String?
+  headerLocation String?
+  headerNpi      String?
+  /** File's own as_of / last_updated_on date. */
+  asOf           DateTime?
   status         String    @default("discovered")
   rowsDiscovered Int       @default(0)
   rowsParsed     Int       @default(0)

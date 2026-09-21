@@ -4,6 +4,10 @@ import { redis } from "@/lib/redis";
 import { searchCptCodes } from "@/lib/cpt-lookup";
 import { classifyMedicalCode } from "@/lib/authoritative/code-kind";
 import { searchHcpcs, searchIcd10Cm, type NlmCodeHit } from "@/lib/authoritative/nlm-clinical-tables";
+import {
+  codesWithFreshPrices,
+  searchServiceDescriptions,
+} from "@/lib/price-transparency/price-read-model";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -44,7 +48,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  const cacheKey = `search11:${query.trim().toLowerCase()}`;
+  const cacheKey = `search12:${query.trim().toLowerCase()}`;
   const cached = await redis.get<ProcedureSearchResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
@@ -84,11 +88,25 @@ export async function POST(req: NextRequest) {
     cptCodes = [query.trim()];
     cptConfidence.set(query.trim(), 100);
   } else {
-    const cptMatches = await searchCptCodes(query, 10);
-    cptCodes = cptMatches.map((m) => m.code);
+    // Text query: search the hospitals' own service descriptions (fresh corpus,
+    // FTS) in parallel with the curated mapping/CPT tables.
+    const [descHits, cptMatches] = await Promise.all([
+      searchServiceDescriptions(query, 12).catch(() => []),
+      searchCptCodes(query, 10),
+    ]);
+    for (const hit of descHits) {
+      if (!cptDescriptions.has(hit.code)) {
+        cptCodes.push(hit.code);
+        cptDescriptions.set(hit.code, hit.description);
+        cptConfidence.set(hit.code, Math.min(95, 60 + hit.hospitalCount * 5));
+      }
+    }
     for (const m of cptMatches) {
-      cptDescriptions.set(m.code, m.description);
-      cptConfidence.set(m.code, m.confidence);
+      if (!cptDescriptions.has(m.code)) {
+        cptCodes.push(m.code);
+        cptDescriptions.set(m.code, m.description);
+        cptConfidence.set(m.code, m.confidence);
+      }
     }
   }
 
@@ -101,17 +119,11 @@ export async function POST(req: NextRequest) {
     } satisfies ProcedureSearchResponse);
   }
 
-  // ── Step 2: Find procedures with basic info (no expensive counts) ─────────
-  // Skip _count.prices and COUNT(DISTINCT hospitalId) — they scan millions of
-  // rows on Neon and cause 30+ second timeouts. Use lightweight existence check.
+  // ── Step 2: keep only codes that actually have fresh published prices ─────
+  const withPrices = await codesWithFreshPrices(cptCodes);
+  const priced = cptCodes.filter((c) => withPrices.has(c));
 
-  const procedures = await prisma.procedure.findMany({
-    where: { cptCode: { in: cptCodes } },
-    select: { id: true, cptCode: true, name: true, category: true },
-    take: 20,
-  });
-
-  if (procedures.length === 0) {
+  if (priced.length === 0) {
     return NextResponse.json({
       procedures: [],
       noData: true,
@@ -123,8 +135,8 @@ export async function POST(req: NextRequest) {
     } satisfies ProcedureSearchResponse);
   }
 
-  // Fetch human-readable names from CptCode table for any codes we don't already have
-  const missingDescs = procedures.filter((p) => !cptDescriptions.has(p.cptCode)).map((p) => p.cptCode);
+  // Prefer curated CptCode descriptions when we have them
+  const missingDescs = priced.filter((c) => !cptDescriptions.has(c));
   if (missingDescs.length) {
     const cptRows = await prisma.cptCode.findMany({
       where: { code: { in: missingDescs } },
@@ -134,23 +146,20 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Step 3: Build results ─────────────────────────────────────────────────
-  // We skip expensive per-procedure hospital/price counts. The compare API
-  // provides detailed per-hospital data when the user selects a procedure.
-
-  const results: ProcedureSearchResult[] = procedures
-    .map((p) => {
-      const confidence = cptConfidence.get(p.cptCode) ?? 0;
+  const results: ProcedureSearchResult[] = priced
+    .map((code) => {
+      const confidence = cptConfidence.get(code) ?? 0;
       const matchQuality: ProcedureSearchResult["matchQuality"] =
         confidence >= 100 ? "exact" :
         confidence > 80   ? "strong" :
         confidence >= 50  ? "partial" :
                             "weak";
       return {
-        cptCode: p.cptCode,
-        name: cptDescriptions.get(p.cptCode) ?? p.name,
-        category: p.category,
-        priceCount: 1, // placeholder — real counts shown in compare view
-        hospitalCount: 0, // placeholder — real counts shown in compare view
+        cptCode: code,
+        name: cptDescriptions.get(code) ?? code,
+        category: "General",
+        priceCount: 1, // real counts shown in compare view
+        hospitalCount: 0,
         matchScore: confidence,
         matchQuality,
       };
