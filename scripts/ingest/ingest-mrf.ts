@@ -12,7 +12,7 @@ import path from "node:path";
 import { Client } from "pg";
 import Papa from "papaparse";
 import { pipeline as streamPipeline } from "node:stream/promises";
-import { PassThrough } from "node:stream";
+import { PassThrough, Transform } from "node:stream";
 import pick from "stream-json/filters/pick.js";
 import streamArray from "stream-json/streamers/stream-array.js";
 import { SHOPPER_HOSPITALS } from "../../src/lib/price-transparency/shopper-hospitals";
@@ -328,10 +328,21 @@ async function ingestJson(
   loader: PriceCopyLoader,
   stats: IngestStats,
 ): Promise<void> {
+  // Some hospitals (Lenox Hill) publish JSON with a UTF-8 BOM the parser rejects.
+  let bomChecked = false;
+  const stripBom = new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      if (!bomChecked) {
+        bomChecked = true;
+        if (chunk[0] === 0xef && chunk[1] === 0xbb && chunk[2] === 0xbf) chunk = chunk.subarray(3);
+      }
+      cb(null, chunk);
+    },
+  });
   const pickStream = pick.withParserAsStream({ filter: "standard_charge_information" });
   const arrayStream = streamArray.asStream();
   const out = new PassThrough({ objectMode: true, highWaterMark: 64 });
-  const pipePromise = streamPipeline(createReadStream(file), pickStream, arrayStream, out);
+  const pipePromise = streamPipeline(createReadStream(file), stripBom, pickStream, arrayStream, out);
 
   for await (const { value } of out as AsyncIterable<{ value: JsonItem }>) {
     stats.discovered++;
