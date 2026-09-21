@@ -150,7 +150,8 @@ export async function searchCptCodes(
 
     try { await redis.set(cacheKey, results, { ex: 86400 }); } catch { /* ignore */ }
     return results;
-  } catch {
+  } catch (err) {
+    console.error("searchCptCodes failed", err);
     return [];
   }
 }

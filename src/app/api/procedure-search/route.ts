@@ -92,7 +92,10 @@ export async function POST(req: NextRequest) {
     // Text query: search the hospitals' own service descriptions (fresh corpus,
     // FTS) in parallel with the curated mapping/CPT tables.
     const [descHits, cptMatches] = await Promise.all([
-      searchServiceDescriptions(query, 12).catch(() => []),
+      searchServiceDescriptions(query, 12).catch((err) => {
+        console.error("searchServiceDescriptions failed", err);
+        return [];
+      }),
       searchCptCodes(query, 10),
     ]);
     const consider = (code: string, description: string, confidence: number) => {
