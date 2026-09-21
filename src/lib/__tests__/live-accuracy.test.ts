@@ -25,4 +25,24 @@ describe.skipIf(!live)("live neon accuracy", () => {
     const bellevue = rows.find((r) => r.hospitalId === "hhc-bellevue");
     expect(nyu?.negotiatedMedianByClass.commercial).not.toBe(bellevue?.cashMedian);
   });
+
+  test("compare grid always lists 13 hospitals and does not copy NYU onto Bellevue", async () => {
+    const { buildShopperCompareEntries } = await import(
+      "@/lib/price-transparency/compare-entries"
+    );
+    const rows = await getPriceSummariesForCode("27766");
+    const entries = buildShopperCompareEntries({
+      summaries: rows,
+      insClass: "commercial",
+      coinsurance: 0.2,
+      hasInsurance: true,
+    });
+    expect(entries).toHaveLength(13);
+    expect(entries.some((e) => /orthopedic/i.test(e.hospital.name))).toBe(false);
+    const byId = Object.fromEntries(entries.map((e) => [e.hospital.id, e]));
+    expect(byId["nyu-langone"].insuranceRate).toBe(10024);
+    expect(byId["hhc-bellevue"].insuranceRate).toBe(5289);
+    expect(byId["nyp-columbia"].dataSource).toBe("none");
+    expect(entries.filter((e) => e.dataSource === "chargemaster")).toHaveLength(5);
+  });
 });
