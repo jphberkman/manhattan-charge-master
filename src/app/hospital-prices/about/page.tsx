@@ -52,16 +52,19 @@ export default function AboutPage() {
         >
           <ul className="mt-2 space-y-1.5">
             {[
-              "NYU Langone Health",
-              "Mount Sinai Hospital",
-              "NewYork-Presbyterian",
-              "Memorial Sloan Kettering",
-              "Hospital for Special Surgery",
-              "Lenox Hill Hospital",
+              "Lenox Hill Hospital (Northwell Health)",
+              "Mount Sinai Morningside",
+              "Mount Sinai West",
+              "NewYork-Presbyterian Lower Manhattan Hospital",
+              "NewYork-Presbyterian / Columbia University Irving Medical Center",
+              "NewYork-Presbyterian / Weill Cornell Medical Center",
               "NYC Health + Hospitals / Bellevue",
-              "Weill Cornell Medical Center",
-              "Columbia University Irving Medical Center",
-              "Beth Israel Mount Sinai",
+              "NYC Health + Hospitals / Harlem",
+              "NYC Health + Hospitals / Metropolitan",
+              "NYU Langone Health (Tisch Hospital & Kimmel Pavilion)",
+              "The Mount Sinai Hospital (Main Campus)",
+              "Hospital for Special Surgery (HSS)",
+              "Memorial Sloan Kettering Cancer Center (MSK)",
             ].map((name) => (
               <li key={name} className="flex items-center gap-2 text-sm text-white/70">
                 <Building2 className="size-3.5 text-white/30" />
