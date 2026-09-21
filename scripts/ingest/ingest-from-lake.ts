@@ -324,7 +324,18 @@ async function copyIndex(
   return i;
 }
 
-async function ingestOne(client: Client, mrf: PreferredMrf, workDir: string, dryRun: boolean): Promise<void> {
+function dbConnect(): Client {
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) throw new Error("DATABASE_URL required");
+  const connectionString = /sslmode=/i.test(dbUrl)
+    ? dbUrl
+    : `${dbUrl}${dbUrl.includes("?") ? "&" : "?"}sslmode=require`;
+  const client = new Client({ connectionString });
+  client.on("error", (err) => console.error("pg client error", err.message));
+  return client;
+}
+
+async function ingestOne(mrf: PreferredMrf, workDir: string): Promise<void> {
   const shopper = SHOPPER_HOSPITALS.find((h) => h.id === mrf.shopperId);
   if (!shopper) throw new Error(`Unknown shopper ${mrf.shopperId}`);
   const expect = HEADER_EXPECT[mrf.shopperId];
@@ -344,11 +355,6 @@ async function ingestOne(client: Client, mrf: PreferredMrf, workDir: string, dry
   }
   console.log(`[${mrf.shopperId}] header OK: "${identityBlob.trim()}" format=${header.format} asOf=${header.asOfIso ?? "unknown"}`);
 
-  if (dryRun) {
-    console.log(`[${mrf.shopperId}] --dry-run: not writing PriceIndex`);
-    return;
-  }
-
   const agg = new SkinnyAggregator();
   const t1 = Date.now();
   if (header.format === "json") await parseJson(dest, agg);
@@ -357,13 +363,19 @@ async function ingestOne(client: Client, mrf: PreferredMrf, workDir: string, dry
   const skinny = agg.toRows();
   console.log(`[${mrf.shopperId}] parsed in ${Math.round((Date.now() - t1) / 1000)}s samples=${agg.accepted} codes=${skinny.length}`);
 
-  await ensureShopperHospital(
-    client,
-    { id: shopper.id, name: shopper.name, address: shopper.address, cmsCcn: shopper.cmsCcn },
-    mrf.objectKey,
-  );
-  const inserted = await copyIndex(client, shopper.id, mrf.objectKey, header.asOfIso, skinny);
-  console.log(`[${mrf.shopperId}] PriceIndex rows=${inserted}`);
+  const client = dbConnect();
+  await client.connect();
+  try {
+    await ensureShopperHospital(
+      client,
+      { id: shopper.id, name: shopper.name, address: shopper.address, cmsCcn: shopper.cmsCcn },
+      mrf.objectKey,
+    );
+    const inserted = await copyIndex(client, shopper.id, mrf.objectKey, header.asOfIso, skinny);
+    console.log(`[${mrf.shopperId}] PriceIndex rows=${inserted}`);
+  } finally {
+    await client.end();
+  }
 }
 
 async function main() {
@@ -371,9 +383,6 @@ async function main() {
   const dryRun = args.includes("--dry-run");
   const onlyArg = args.find((a) => a.startsWith("--only="));
   const only = onlyArg ? new Set(onlyArg.slice(7).split(",").filter(Boolean)) : null;
-
-  const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) throw new Error("DATABASE_URL required");
 
   const cfg = storageConfigFromEnv();
   console.log(`Reading ${MASTER_INDEX_KEY} from s3://${cfg.bucket}`);
@@ -386,14 +395,17 @@ async function main() {
     console.log(`  - ${t.shopperId} ← ${t.objectKey} (${(t.sizeBytes / 1e6).toFixed(1)} MB)`);
   }
   if (!targets.length) return;
+  if (dryRun) {
+    console.log("--dry-run: catalog only; not downloading MRFs or writing PriceIndex");
+    return;
+  }
+  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL required");
 
-  const client = new Client({ connectionString: dbUrl });
-  await client.connect();
   const workDir = mkdtempSync(path.join(tmpdir(), "sfc-lake-"));
   try {
     for (const mrf of targets) {
       try {
-        await ingestOne(client, mrf, workDir, dryRun);
+        await ingestOne(mrf, workDir);
       } catch (err) {
         console.error(`[${mrf.shopperId}] FAILED`, err);
         throw err;
@@ -407,7 +419,6 @@ async function main() {
     }
   } finally {
     rmSync(workDir, { recursive: true, force: true });
-    await client.end();
   }
 }
 
