@@ -3,7 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
 import { getBestMedicareBenchmark, getMedicareRateAsync } from "@/lib/medicare";
 import type { MedicareBenchmark } from "@/lib/medicare";
-import { getShopperHospital } from "@/lib/price-transparency/shopper-hospitals";
+import { SHOPPER_HOSPITALS } from "@/lib/price-transparency/shopper-hospitals";
+import {
+  buildShopperCompareEntries,
+  type ShopperCompareEntry,
+} from "@/lib/price-transparency/compare-entries";
 import {
   getPayerSpecificMedians,
   getPriceSummariesForCode,
@@ -11,37 +15,17 @@ import {
 
 export const maxDuration = 60;
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-export interface HospitalComparisonEntry {
-  hospital: { id: string; name: string; address: string };
-  chargemasterPrice: number | null;
-  insuranceRate: number | null;
-  patientCost: number | null;
-  insurerPays: number | null;
-  cashPrice: number | null;
-  payerName: string | null;
-  dataQuality: "real" | "partial";
-  /** Where this data came from */
-  dataSource: "chargemaster" | "cms-avg" | "cms-derived-estimate" | "none";
-  isAiEstimate: boolean;
-  dataLastUpdated: string | null;
-  rank: number;
-  /** De-identified min/max across this hospital's published rates for the code. */
-  publishedMin: number | null;
-  publishedMax: number | null;
-}
+export type HospitalComparisonEntry = ShopperCompareEntry;
 
 export interface CompareResponse {
   entries: HospitalComparisonEntry[];
   medicare: MedicareBenchmark | null;
+  /** Always 13. Campuses without a file or code stay visible with null prices. */
+  shopperHospitalCount: number;
+  pricedHospitalCount: number;
   /** Source hospital rows that could not be attributed to a shopper facility. */
   unattributedSourceHospitals: number;
 }
-
-// ── Route handler ─────────────────────────────────────────────────────────────
-// Reads the fresh per-campus corpus (PriceSummary) only. Legacy rows without
-// provenance are quarantined and never shown to consumers.
 
 export async function GET(req: NextRequest) {
   const startTime = Date.now();
@@ -59,81 +43,45 @@ export async function GET(req: NextRequest) {
 
   if (!cptCode) return NextResponse.json({ error: "cptCode is required" }, { status: 400 });
 
-  const cacheKey = `compare19:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance ?? "none"}`;
+  const cacheKey = `compare23:${cptCode}|${payerType ?? ""}|${payerName ?? ""}|${coinsurance ?? "none"}`;
   const cached = await redis.get<CompareResponse>(cacheKey);
   if (cached) return NextResponse.json(cached, {
     headers: { "Cache-Control": "s-maxage=86400, stale-while-revalidate=604800" },
   });
 
   const insClass = payerType && payerType !== "cash" ? payerType : "commercial";
+  const hasInsurance = Boolean(payerType && payerType !== "cash");
 
   const [summaries, payerSpecific] = await Promise.all([
     getPriceSummariesForCode(cptCode),
     payerName ? getPayerSpecificMedians(cptCode, payerName) : Promise.resolve(new Map<string, { median: number; payerName: string }>()),
   ]);
 
-  const entries: HospitalComparisonEntry[] = [];
-
-  for (const s of summaries) {
-    const shopper = getShopperHospital(s.hospitalId);
-    if (!shopper) continue;
-
-    const specific = payerSpecific.get(s.hospitalId) ?? null;
-    const insuranceRate = specific?.median ?? s.negotiatedMedianByClass[insClass] ?? null;
-    const cashPrice = s.cashMedian;
-
-    if (insuranceRate == null && cashPrice == null) continue;
-
-    const patientCost =
-      insuranceRate != null && coinsurance != null ? Math.round(insuranceRate * coinsurance) : null;
-    const insurerPays =
-      insuranceRate != null && coinsurance != null
-        ? Math.round(insuranceRate * (1 - coinsurance))
-        : null;
-
-    entries.push({
-      hospital: { id: shopper.id, name: shopper.name, address: shopper.address },
-      chargemasterPrice: s.grossMedian,
-      insuranceRate,
-      patientCost,
-      insurerPays,
-      cashPrice,
-      payerName: specific?.payerName ?? null,
-      dataQuality: insuranceRate != null && cashPrice != null ? "real" : "partial",
-      dataSource: "chargemaster",
-      isAiEstimate: false,
-      dataLastUpdated: s.latestAsOf,
-      rank: 0,
-      publishedMin: s.minDollars,
-      publishedMax: s.maxDollars,
-    });
-  }
+  const entries = buildShopperCompareEntries({
+    summaries,
+    payerSpecific,
+    insClass,
+    coinsurance,
+    hasInsurance,
+  });
 
   const medicare = await getMedicareRateAsync(cptCode) ?? getBestMedicareBenchmark([cptCode]);
-
-  // Sort: when insurance selected, prefer published negotiated rates — never fabricated OOP.
-  const hasInsurance = payerType && payerType !== "cash";
-  entries.sort((a, b) => {
-    const av = hasInsurance
-      ? (a.patientCost ?? a.insuranceRate ?? Infinity)
-      : (a.cashPrice ?? Infinity);
-    const bv = hasInsurance
-      ? (b.patientCost ?? b.insuranceRate ?? Infinity)
-      : (b.cashPrice ?? Infinity);
-    if (av !== bv) return av - bv;
-    return a.dataQuality === "real" ? -1 : 1;
-  });
-  entries.forEach((e, i) => { e.rank = i + 1; });
-  const response: CompareResponse = { entries, medicare, unattributedSourceHospitals: 0 };
+  const pricedHospitalCount = entries.filter((e) => e.dataSource === "chargemaster").length;
+  const response: CompareResponse = {
+    entries,
+    medicare,
+    shopperHospitalCount: SHOPPER_HOSPITALS.length,
+    pricedHospitalCount,
+    unattributedSourceHospitals: 0,
+  };
 
   await redis.set(cacheKey, response, { ex: 86400 });
 
-  // Fire-and-forget search log
   prisma.searchLog.create({
     data: {
       query: cptCode,
       endpoint: "hospitals/compare",
-      resultCount: entries.length,
+      resultCount: pricedHospitalCount,
       cptCode,
       insurerName: payerName ?? null,
       payerType: payerType ?? null,

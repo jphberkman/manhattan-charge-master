@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Loader2, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Building2, Trophy, ShieldCheck, Info, ChevronDown } from "lucide-react";
+import { Loader2, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown, Building2, Trophy, ShieldCheck, Info, ChevronDown, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { GlossaryTip } from "./GlossaryTip";
 import type { HospitalComparisonEntry, CompareResponse } from "@/app/api/hospitals/compare/route";
 import type { MedicareBenchmark } from "@/lib/medicare";
 import type { InsuranceSelection } from "./InsuranceSelector";
 import { calculatePatientCost, type PlanDetails, type CostBreakdown } from "@/lib/cost-calculator";
+import { buildCompareShareText } from "@/lib/price-transparency/compare-entries";
 
 const fmt = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 const fmtNull = (v: number | null) => (v == null ? "—" : fmt.format(v));
@@ -27,11 +28,14 @@ interface Props {
 export function HospitalCostComparison({ cptCode, procedureName, insurance, coinsurance, allCptCodes, planDetails, onPricesLoaded }: Props) {
   const [entries, setEntries] = useState<HospitalComparisonEntry[]>([]);
   const [medicare, setMedicare] = useState<MedicareBenchmark | null>(null);
+  const [shopperHospitalCount, setShopperHospitalCount] = useState(13);
+  const [pricedHospitalCount, setPricedHospitalCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("rank");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [expandedProvenance, setExpandedProvenance] = useState<Set<string>>(new Set());
+  const [copiedShare, setCopiedShare] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -47,6 +51,10 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
       if (!res.ok) throw new Error((data as unknown as { error: string }).error ?? "Failed");
       setEntries(data.entries);
       setMedicare(data.medicare ?? null);
+      setShopperHospitalCount(data.shopperHospitalCount ?? data.entries.length);
+      setPricedHospitalCount(
+        data.pricedHospitalCount ?? data.entries.filter((e) => e.dataSource === "chargemaster").length,
+      );
       onPricesLoaded?.(data.entries);
 
       // Track hospital comparison load
@@ -95,18 +103,23 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
   };
 
   const sortVal = (e: HospitalComparisonEntry) => {
-    if (sortKey === "rank") return e.rank;
+    if (sortKey === "rank") return e.rank > 0 ? e.rank : Infinity;
     if (sortKey === "patientCost") return getPatientCost(e) ?? Infinity;
     if (sortKey === "cash") return e.cashPrice ?? Infinity;
     if (sortKey === "insurance") return e.insuranceRate ?? Infinity;
     if (sortKey === "savings") { const pct = savingsPct(e); return pct != null ? -pct : Infinity; }
-    return e.rank;
+    return e.rank > 0 ? e.rank : Infinity;
   };
 
   const sorted = [...entries].sort((a, b) => {
+    const aEmpty = a.dataSource === "none";
+    const bEmpty = b.dataSource === "none";
+    if (aEmpty !== bEmpty) return aEmpty ? 1 : -1;
     const d = sortVal(a) - sortVal(b);
     return sortDir === "asc" ? d : -d;
   });
+
+  const pricedEntries = entries.filter((e) => e.dataSource === "chargemaster");
 
   const withIns  = entries.filter((e) => getPatientCost(e) != null && (getPatientCost(e) ?? 0) > 0).sort((a, b) => (getPatientCost(a) ?? 0) - (getPatientCost(b) ?? 0));
   const withCash = entries.filter((e) => e.cashPrice != null && e.cashPrice > 0).sort((a, b) => (a.cashPrice ?? 0) - (b.cashPrice ?? 0));
@@ -138,6 +151,30 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
 
   const insuranceLabel = insurance?.displayLabel ?? "Insurance";
 
+  const freshnessDates = pricedEntries
+    .map((e) => e.dataLastUpdated)
+    .filter((d): d is string => Boolean(d))
+    .sort();
+  const freshnessLabel = freshnessDates.length
+    ? `Files as of ${new Date(freshnessDates[0]).toLocaleDateString("en-US", { month: "short", year: "numeric" })}`
+    : null;
+
+  const copyShareCard = async () => {
+    const text = buildCompareShareText({
+      procedureName,
+      cptCode,
+      entries,
+      insuranceLabel: showIns ? insuranceLabel : null,
+    });
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedShare(true);
+      window.setTimeout(() => setCopiedShare(false), 2000);
+    } catch {
+      setCopiedShare(false);
+    }
+  };
+
   return (
     <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
 
@@ -153,16 +190,29 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
               {cptCode && <span className="ml-2 text-sm font-normal text-violet-300">CPT {cptCode}</span>}
             </h3>
             <p className="mt-0.5 text-sm text-slate-400">
-              Ranked cheapest to most expensive — with your insurance and without
+              All {shopperHospitalCount} Manhattan hospitals — {pricedHospitalCount} published a price for this code
+              {freshnessLabel && <span className="text-slate-500"> · {freshnessLabel}</span>}
             </p>
           </div>
-          {showIns && !loading && entries.length > 0 && (
-            <div className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 shrink-0">
-              <ShieldCheck className="size-4 text-violet-300" />
-              <span className="text-xs font-semibold text-white">{insuranceLabel}</span>
-              <span className="text-xs text-slate-400">· {Math.round(coinsurance * 100)}% coinsurance</span>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {showIns && !loading && entries.length > 0 && (
+              <div className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2">
+                <ShieldCheck className="size-4 text-violet-300" />
+                <span className="text-xs font-semibold text-white">{insuranceLabel}</span>
+                <span className="text-xs text-slate-400">· estimated {Math.round(coinsurance * 100)}% coinsurance</span>
+              </div>
+            )}
+            {!loading && entries.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void copyShareCard()}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/20"
+              >
+                {copiedShare ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                {copiedShare ? "Copied" : "Copy for scheduler"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -228,9 +278,9 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
           )}
 
           {/* ── Top 3 winner cards ── */}
-          {sorted.length >= 2 && (
+          {pricedEntries.length >= 2 && (
             <div className="grid gap-3 border-b border-neutral-100 px-6 py-4 sm:grid-cols-3">
-              {sorted.slice(0, 3).map((entry, i) => {
+              {pricedEntries.slice(0, 3).map((entry, i) => {
                 const isWinner = i === 0;
                 const isBestIns  = showIns && cheapestIns?.hospital.id === entry.hospital.id;
                 const isBestCash = cheapestCash?.hospital.id === entry.hospital.id;
@@ -253,11 +303,9 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                         <Trophy className="size-3" /> Best price
                       </div>
                     )}
-                    <div className="flex items-start justify-between gap-2 mt-1">
-                      <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-white border border-neutral-200 text-xs font-bold text-neutral-500">
-                        {i + 1}
-                      </div>
-                      </div>
+                    <div className="mt-1 flex size-6 shrink-0 items-center justify-center rounded-full bg-white border border-neutral-200 text-xs font-bold text-neutral-500">
+                      {i + 1}
+                    </div>
                     <p className="mt-2 text-xs font-semibold text-neutral-600 leading-tight line-clamp-2">
                       {entry.hospital.name}
                     </p>
@@ -371,17 +419,22 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                       key={entry.hospital.id + i}
                       className={cn(
                         "border-b border-neutral-100 last:border-b-0 transition-colors hover:bg-neutral-50/80",
-                        isHighlight && "bg-green-50/50 hover:bg-green-50"
+                        isHighlight && "bg-green-50/50 hover:bg-green-50",
+                        entry.dataSource === "none" && "opacity-70"
                       )}
                     >
                       {/* Rank */}
                       <td className="py-3 pl-6 text-center">
-                        <span className={cn(
-                          "inline-flex size-7 items-center justify-center rounded-full text-xs font-bold",
-                          isHighlight ? "bg-green-500 text-white" : "bg-neutral-100 text-neutral-500"
-                        )}>
-                          {entry.rank}
-                        </span>
+                        {entry.rank > 0 ? (
+                          <span className={cn(
+                            "inline-flex size-7 items-center justify-center rounded-full text-xs font-bold",
+                            isHighlight ? "bg-green-500 text-white" : "bg-neutral-100 text-neutral-500"
+                          )}>
+                            {entry.rank}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-neutral-300">—</span>
+                        )}
                       </td>
 
                       {/* Hospital name */}
@@ -394,6 +447,15 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                               {isBestIns && showIns && <Badge color="green">Cheapest with insurance</Badge>}
                               {isBestCash && !showIns && <Badge color="green">Cheapest cash</Badge>}
                               {isBestCash && showIns && !isBestIns && <Badge color="blue">Cheapest cash</Badge>}
+                              {entry.rateBasis === "payer-specific" && entry.payerName && (
+                                <Badge color="blue">{entry.payerName} row</Badge>
+                              )}
+                              {entry.rateBasis === "class-median" && showIns && (
+                                <Badge color="amber">Commercial median</Badge>
+                              )}
+                              {entry.fileCoversMultipleSites && (
+                                <Badge color="amber">File lists multiple sites</Badge>
+                              )}
                             </div>
                             <div className="mt-0.5 flex items-center gap-2">
                               <p className="max-w-[200px] truncate text-xs text-neutral-400">{entry.hospital.address}</p>
@@ -409,13 +471,9 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                                 <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 rounded px-1.5 py-0.5">
                                   Hospital published · no insurer rate for this procedure
                                 </span>
-                              ) : entry.dataSource === "cms-avg" || entry.dataSource === "cms-derived-estimate" ? (
-                                <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-blue-600 bg-blue-50 rounded px-1.5 py-0.5">
-                                  <Info className="size-2.5" /> CMS-derived estimate · not from hospital file
-                                </span>
                               ) : (
                                 <span className="shrink-0 inline-flex items-center gap-1 text-[10px] font-medium text-neutral-400 bg-neutral-100 rounded px-1.5 py-0.5">
-                                  No chargemaster data found
+                                  {entry.coverageReason ?? "No chargemaster data found"}
                                 </span>
                               )}
                               {entry.dataLastUpdated && (
@@ -441,9 +499,7 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                                   <span>
                                     {entry.dataSource === "chargemaster"
                                       ? "Hospital chargemaster file (price transparency disclosure)"
-                                      : entry.dataSource === "cms-avg" || entry.dataSource === "cms-derived-estimate"
-                                        ? "CMS-derived estimate (commercial rate estimated from Medicare claims data)"
-                                        : "No published data available"}
+                                      : entry.coverageReason ?? "No published data available"}
                                   </span>
                                 </div>
                                 <div className="flex gap-4">
@@ -461,19 +517,38 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                                 <div className="flex gap-4">
                                   <span className="font-semibold text-neutral-400 w-20 shrink-0">Price type</span>
                                   <span>
-                                    {entry.dataQuality === "real" && entry.insuranceRate != null && entry.cashPrice != null
-                                      ? "Negotiated rate + Cash/self-pay"
-                                      : entry.insuranceRate != null
-                                        ? "Negotiated rate"
-                                        : entry.cashPrice != null
-                                          ? "Cash/self-pay"
-                                          : "Gross charge only"}
+                                    {entry.rateBasis === "payer-specific" && entry.payerName
+                                      ? `${entry.payerName} negotiated row`
+                                      : entry.rateBasis === "class-median"
+                                        ? "Commercial negotiated median"
+                                        : entry.dataQuality === "real" && entry.insuranceRate != null && entry.cashPrice != null
+                                          ? "Negotiated rate + Cash/self-pay"
+                                          : entry.insuranceRate != null
+                                            ? "Negotiated rate"
+                                            : entry.cashPrice != null
+                                              ? "Cash/self-pay"
+                                              : "Gross charge only"}
                                   </span>
                                 </div>
-                                {(entry.dataSource === "cms-avg" || entry.dataSource === "cms-derived-estimate") && (
-                                  <p className="mt-1 text-[10px] text-blue-600 bg-blue-50 rounded px-2 py-1">
-                                    Note: This is a CMS-derived estimate. The insurance rate is estimated as ~2.5x the Medicare payment rate.
-                                    Actual negotiated rates may differ significantly.
+                                {entry.publishedMin != null && entry.publishedMax != null && (
+                                  <div className="flex gap-4">
+                                    <span className="font-semibold text-neutral-400 w-20 shrink-0">Range</span>
+                                    <span>{fmt.format(entry.publishedMin)}–{fmt.format(entry.publishedMax)}</span>
+                                  </div>
+                                )}
+                                {entry.fileCoversMultipleSites && (
+                                  <p className="mt-1 text-[10px] text-amber-700 bg-amber-50 rounded px-2 py-1">
+                                    This hospital’s transparency file lists multiple sites. Dollars are not split by campus.
+                                  </p>
+                                )}
+                                {entry.sameSystemCash && (
+                                  <p className="mt-1 text-[10px] text-neutral-500 bg-white rounded px-2 py-1">
+                                    NYC Health + Hospitals campuses published the same cash price in their files. That is not copied from another hospital.
+                                  </p>
+                                )}
+                                {entry.coverageReason && (
+                                  <p className="mt-1 text-[10px] text-neutral-500 bg-white rounded px-2 py-1">
+                                    {entry.coverageReason}
                                   </p>
                                 )}
                               </div>
@@ -491,6 +566,14 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                           )}>
                             {fmtNull(entry.cashPrice)}
                           </span>
+                          {entry.sameSystemCash && (
+                            <p className="mt-0.5 text-[10px] text-neutral-400">Same published cash as other NYC Health + Hospitals campuses</p>
+                          )}
+                          {entry.publishedMin != null && entry.publishedMax != null && entry.publishedMin !== entry.publishedMax && (
+                            <p className="mt-0.5 text-[10px] text-neutral-400">
+                              File range {fmt.format(entry.publishedMin)}–{fmt.format(entry.publishedMax)}
+                            </p>
+                          )}
                           {entry.cashPrice != null && (
                             <div className="mt-1.5 h-1.5 w-20 ml-auto rounded-full bg-neutral-100">
                               <div
@@ -506,6 +589,12 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                       {showIns && (
                         <td className="px-4 py-3 text-right">
                           <span className="font-mono text-sm text-neutral-600">{fmtNull(entry.insuranceRate)}</span>
+                          {entry.rateBasis === "payer-specific" && entry.payerName && (
+                            <p className="mt-0.5 text-[10px] text-violet-500">{entry.payerName} row in the file</p>
+                          )}
+                          {entry.rateBasis === "class-median" && (
+                            <p className="mt-0.5 text-[10px] text-neutral-400">Commercial median, not a named-plan row</p>
+                          )}
                         </td>
                       )}
 
@@ -519,6 +608,11 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
                             )}>
                               {fmtNull(rowPatientCost)}
                             </span>
+                            {rowPatientCost != null && (
+                              <p className="mt-0.5 text-[10px] text-violet-500 text-right">
+                                Estimate from your coinsurance — not a hospital-published number
+                              </p>
+                            )}
                             {rowBreakdown && (
                               <p className="mt-0.5 text-[10px] text-violet-500 text-right">
                                 {rowBreakdown.oopCapApplied
@@ -569,8 +663,8 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
           {/* Footer */}
           <div className="border-t border-neutral-100 bg-neutral-50 px-6 py-3 space-y-1.5">
             <p className="text-xs text-neutral-400">
-              &quot;Your cost&quot; = what you owe after your insurance pays its share ·
-              &quot;Insurance saves&quot; = how much less you pay vs paying the full cash price yourself
+              &quot;Your cost&quot; is an estimate from the coinsurance or plan details you entered — hospitals do not publish what you will pay.
+              &quot;Insurance saves&quot; compares that estimate to the published cash price.
               {planDetails && (
                 <span className="block mt-1 text-violet-500 font-medium">
                   Costs calculated using your plan details (deductible, coinsurance, OOP max)
@@ -580,17 +674,34 @@ export function HospitalCostComparison({ cptCode, procedureName, insurance, coin
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-neutral-400">
               <span>
                 <ShieldCheck className="inline size-2.5 text-emerald-500 mr-0.5" />
-                <strong>Hospital published</strong> = directly from the hospital&apos;s price transparency file
+                <strong>Hospital published</strong> = directly from that hospital&apos;s own price transparency file
               </span>
               <span>
-                <Info className="inline size-2.5 text-blue-400 mr-0.5" />
-                <strong>CMS average</strong> = Medicare claims average, not from the hospital&apos;s own file
+                <span className="inline-block size-2.5 rounded-full bg-violet-300 mr-0.5 align-middle" />
+                <strong>Payer row</strong> = that insurer&apos;s line in the file, not the all-commercial median
               </span>
               <span>
                 <span className="inline-block size-2.5 rounded-full bg-neutral-300 mr-0.5 align-middle" />
-                <strong>No data</strong> = hospital did not publish pricing for this procedure
+                <strong>No data</strong> = this campus has no file, the file is a combined multi-campus dump we will not guess from, or the file does not list this billing code
               </span>
             </div>
+            <p className="text-[10px] text-neutral-400">
+              All 13 Manhattan shopper hospitals stay on this list. We never copy one hospital&apos;s dollars onto another.
+              Matching cash at Bellevue, Harlem, and Metropolitan is the same NYC Health + Hospitals published cash.
+            </p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-neutral-400">
+              <span>
+                <ShieldCheck className="inline size-2.5 text-emerald-500 mr-0.5" />
+                <strong>Hospital published</strong> = directly from that hospital&apos;s own price transparency file
+              </span>
+              <span>
+                <span className="inline-block size-2.5 rounded-full bg-neutral-300 mr-0.5 align-middle" />
+                <strong>No data</strong> = this campus has no file, the file is a combined multi-campus dump we will not guess from, or the file does not list this billing code
+              </span>
+            </div>
+            <p className="text-[10px] text-neutral-400">
+              All 13 Manhattan shopper hospitals stay on this list. We never copy one hospital&apos;s dollars onto another.
+            </p>
           </div>
         </>
       )}

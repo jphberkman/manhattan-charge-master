@@ -142,6 +142,40 @@ model PriceSummary {
   @@index([hospitalId])
 }
 
+/// Skinny search index: one row per (hospital, billing code).
+/// Built from Neon warehouse MRFs (`shopforcare-price-transparency`).
+/// The app queries this table — never raw chargemaster objects.
+model PriceIndex {
+  id                 String    @id @default(cuid())
+  hospitalId         String
+  code               String
+  codeKind           String
+  description        String?
+  /** Gross / chargemaster list price (median of published gross amounts). */
+  listCents          Int?
+  /** Discounted cash / self-pay (median). */
+  cashCents          Int?
+  /**
+   * Commercial negotiated median. Kept as negotiatedCents for the original
+   * skinny-table contract (list / cash / negotiated). Never a blend of Medicare/Medicaid.
+   */
+  negotiatedCents    Int?
+  commercialCents    Int?
+  medicareCents      Int?
+  medicaidCents      Int?
+  negotiatedMinCents Int?
+  negotiatedMaxCents Int?
+  sampleCount        Int       @default(0)
+  /** Warehouse object key; originals stay in Neon storage. */
+  objectKey          String
+  asOf               DateTime?
+  ingestedAt         DateTime  @default(now())
+
+  @@unique([hospitalId, code])
+  @@index([code])
+  @@index([hospitalId])
+}
+
 model CptCode {
   code        String   @id          // e.g. "27447"
   description String                // e.g. "Total knee replacement"
