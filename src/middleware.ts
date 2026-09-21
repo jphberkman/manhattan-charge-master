@@ -15,6 +15,8 @@ const SITE_GATED_PATHS = [
   "/api/concern-explore",
   "/api/admin",
   "/api/validate",
+  "/api/codes",
+  "/api/authoritative",
 ];
 
 export async function middleware(request: NextRequest) {

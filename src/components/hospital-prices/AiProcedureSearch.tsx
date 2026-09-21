@@ -27,6 +27,7 @@ type Phase =
   | "idle"
   | "db-searching"    // fast DB lookup in progress
   | "db-results"      // real chargemaster data found — show hospital comparison
+  | "diagnosis"       // ICD-10-CM validated; not a price key
   | "no-data"         // nothing in DB — AI started automatically
   | "ai-loading"      // AI breakdown in progress
   | "ai-results";     // full AI breakdown ready
@@ -105,6 +106,7 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [expandedIds, setExpandedIds]   = useState<Set<string>>(new Set());
   const [hospitalPrices, setHospitalPrices] = useState<HospitalComparisonEntry[]>([]);
+  const [diagnosisMatches, setDiagnosisMatches] = useState<{ code: string; description: string }[]>([]);
   const [loadingPhase, setLoadingPhase] = useState(0);
   const [elapsed, setElapsed]           = useState(0);
   const [progress, setProgress]         = useState(0);
@@ -151,6 +153,7 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
     setShowBreakdown(false);
     setExpandedIds(new Set());
     setHospitalPrices([]);
+    setDiagnosisMatches([]);
     setShowInsurancePicker(false);
     setInsurancePickerExpanded(false);
     setPlanDetails(null);
@@ -183,6 +186,19 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
         body: JSON.stringify({ query: trimmed }),
       });
       const data: ProcedureSearchResponse = await res.json();
+
+      if (data.queryKind === "icd10-cm") {
+        setDiagnosisMatches(data.diagnosisMatches ?? []);
+        setShowInsurancePicker(false);
+        setPhase("diagnosis");
+        window.gtag?.("event", "procedure_search", {
+          search_term: trimmed,
+          result_count: data.diagnosisMatches?.length ?? 0,
+          search_duration_ms: Date.now() - searchStartRef.current,
+          source: "icd10cm",
+        });
+        return;
+      }
 
       if (!res.ok || data.noData || !data.procedures.length) {
         dbMatchesRef.current = [];
@@ -604,6 +620,31 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
             {[0, 1, 2].map((i) => (
               <div key={i} className="h-10 animate-pulse rounded-xl bg-neutral-100" style={{ opacity: 1 - i * 0.25 }} />
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Diagnosis (ICD-10-CM) — not a price key ── */}
+      {phase === "diagnosis" && (
+        <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+          <div className="px-6 py-5 space-y-3">
+            <p className="text-base font-bold text-neutral-800">Diagnosis code, not a hospital price</p>
+            <p className="text-sm text-neutral-500 leading-relaxed">
+              ICD-10-CM identifies a condition. ShopForCare does not look up chargemaster dollars by diagnosis code.
+              Validated against NLM ICD-10-CM Clinical Tables.
+            </p>
+            {diagnosisMatches.length === 0 ? (
+              <p className="text-sm text-neutral-600">No matching ICD-10-CM code in the NLM tables.</p>
+            ) : (
+              <ul className="space-y-2">
+                {diagnosisMatches.map((d) => (
+                  <li key={d.code} className="rounded-xl border border-neutral-100 bg-neutral-50 px-4 py-3">
+                    <span className="font-mono text-sm font-semibold text-neutral-800">{d.code}</span>
+                    <p className="text-sm text-neutral-600">{d.description}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       )}

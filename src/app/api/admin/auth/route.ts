@@ -6,6 +6,9 @@ const DEFAULT_PASSWORD = "shopforcare-admin-2026";
 /** POST — authenticate admin */
 export async function POST(req: NextRequest) {
   const { password } = (await req.json()) as { password: string };
+  if (process.env.NODE_ENV === "production" && !process.env.ADMIN_PASSWORD) {
+    return NextResponse.json({ error: "Admin login is not configured" }, { status: 503 });
+  }
   const expected = process.env.ADMIN_PASSWORD ?? DEFAULT_PASSWORD;
 
   if (password !== expected) {

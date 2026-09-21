@@ -124,15 +124,6 @@ function repairJson(jsonStr: string): string {
   return repair;
 }
 
-function byCode(
-  rows: { priceInCents: number; procedure: { cptCode: string } }[],
-): Record<string, number[]> {
-  return rows.reduce<Record<string, number[]>>((acc, r) => {
-    (acc[r.procedure.cptCode] ??= []).push(r.priceInCents / 100);
-    return acc;
-  }, {});
-}
-
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
 /**
@@ -404,31 +395,33 @@ and follow-up visits.`;
       const dbTimeout = <T>(promise: Promise<T>, fallback: T): Promise<T> =>
         Promise.race([promise, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), 5000))]);
 
-      const [grossRows, cashRows, insRows] = await Promise.all([
-        dbTimeout(prisma.priceEntry.findMany({
-          where: { procedure: { cptCode: { in: cptCodes } }, priceType: "gross" },
-          select: { priceInCents: true, procedure: { select: { cptCode: true } } },
-          take: 500,
-        }), []),
-        dbTimeout(prisma.priceEntry.findMany({
-          where: { procedure: { cptCode: { in: cptCodes } }, payerType: "cash" },
-          select: { priceInCents: true, procedure: { select: { cptCode: true } } },
-          take: 500,
-        }), []),
-        dbTimeout(prisma.priceEntry.findMany({
-          where: {
-            procedure: { cptCode: { in: cptCodes } },
-            payerType: insPayerType,
-            priceType: { in: ["negotiated", "discounted"] },
+      // Fresh corpus read model only; legacy rows are quarantined.
+      const summaries = await dbTimeout(
+        prisma.priceSummary.findMany({
+          where: { code: { in: cptCodes } },
+          select: {
+            code: true,
+            payerClass: true,
+            priceType: true,
+            minCents: true,
+            medianCents: true,
+            maxCents: true,
           },
-          select: { priceInCents: true, procedure: { select: { cptCode: true } } },
-          take: 500,
-        }), []),
-      ]);
+        }),
+        [],
+      );
 
-      const grossByCpt = byCode(grossRows);
-      const cashByCpt = byCode(cashRows);
-      const insByCpt = byCode(insRows);
+      const grossByCpt: Record<string, number[]> = {};
+      const cashByCpt: Record<string, number[]> = {};
+      const insByCpt: Record<string, number[]> = {};
+      for (const s of summaries) {
+        const bucket =
+          s.priceType === "gross" ? grossByCpt :
+          s.priceType === "cash" ? cashByCpt :
+          s.payerClass === insPayerType ? insByCpt : null;
+        if (!bucket) continue;
+        (bucket[s.code] ??= []).push(s.minCents / 100, s.medianCents / 100, s.maxCents / 100);
+      }
 
       const enrichedComponents: BreakdownComponent[] = rawBreakdown.components.map((comp) => {
         const gross = comp.cptCode ? (grossByCpt[comp.cptCode] ?? []) : [];

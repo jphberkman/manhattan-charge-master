@@ -4,6 +4,7 @@ import JSZip from "jszip";
 import { prisma } from "@/lib/prisma";
 import { anthropicCall } from "@/lib/anthropic-fetch";
 import { getMedicareRate } from "@/lib/medicare";
+import { finishSourceFile, sha256Buffer, startSourceFile } from "@/lib/price-transparency/source-file-inventory";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -449,7 +450,7 @@ function cmsObjectToRows(obj: Record<string, unknown>, hospitalName: string): No
 
   for (const charge of (obj.standard_charges as Record<string, unknown>[]) ?? []) {
     if (charge.gross_charge) {
-      rows.push({ ...base, payerName: "Gross", payerType: "gross", priceInCents: Math.round(Number(charge.gross_charge) * 100), priceType: "gross" });
+      rows.push({ ...base, payerName: "Gross", payerType: "other", priceInCents: Math.round(Number(charge.gross_charge) * 100), priceType: "gross" });
     }
     if (charge.discounted_cash) {
       rows.push({ ...base, payerName: "Cash", payerType: "cash", priceInCents: Math.round(Number(charge.discounted_cash) * 100), priceType: "discounted" });
@@ -548,11 +549,22 @@ async function processXlsx(buffer: Buffer, filename: string) {
 // POST /api/upload
 // ---------------------------------------------------------------------------
 export async function POST(req: NextRequest) {
-  try {
-    const filename = req.headers.get("x-filename") ?? "upload.csv";
-    const ext = filename.split(".").pop()?.toLowerCase();
+  let inventoryId: string | null = null;
+  let finishStatus: "processed" | "processed_with_warnings" | "failed" = "failed";
+  let rowsInserted = 0;
+  let rowsRejected = 0;
+  let warningCount = 0;
+  let errorMessage: string | undefined;
+  const filename = req.headers.get("x-filename") ?? "upload.csv";
+  const ext = filename.split(".").pop()?.toLowerCase();
 
-    if (!req.body) return NextResponse.json({ error: "No file provided" }, { status: 400 });
+  try {
+    inventoryId = await startSourceFile({ filename, format: ext, parser: "upload-api" });
+
+    if (!req.body) {
+      errorMessage = "No file provided";
+      return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    }
 
     // ── ZIP: extract and process each file inside ───────────────────────────
     if (ext === "zip") {
@@ -633,6 +645,13 @@ export async function POST(req: NextRequest) {
           }
         }
       }
+      finishStatus =
+        zipValidation.skippedBadCpt > 0 || zipValidation.flaggedHighPrice > 0
+          ? "processed_with_warnings"
+          : "processed";
+      rowsInserted = pricesInserted;
+      rowsRejected = zipValidation.skippedLowPrice + zipValidation.skippedBadCpt;
+      warningCount = zipValidation.flaggedHighPrice + zipValidation.flaggedMedicareOutlier;
       return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, validation: zipValidation, schemaDetected: { notes: `Processed ${entries.length} file(s) from ZIP` } });
     }
 
@@ -672,7 +691,17 @@ export async function POST(req: NextRequest) {
         pricesInserted += stats.pricesInserted;
       }
 
-      if (pricesInserted === 0) return NextResponse.json({ error: "No valid price rows found in JSON file.", validation }, { status: 400 });
+      if (pricesInserted === 0) {
+        errorMessage = "No valid price rows found in JSON file.";
+        return NextResponse.json({ error: errorMessage, validation }, { status: 400 });
+      }
+      finishStatus =
+        validation.skippedBadCpt > 0 || validation.flaggedHighPrice > 0
+          ? "processed_with_warnings"
+          : "processed";
+      rowsInserted = pricesInserted;
+      rowsRejected = validation.skippedLowPrice + validation.skippedBadCpt;
+      warningCount = validation.flaggedHighPrice + validation.flaggedMedicareOutlier;
       return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, validation, schemaDetected: { notes: isCms ? "CMS 2.0 standard format detected" : "Flat array format detected" } });
     }
 
@@ -680,6 +709,13 @@ export async function POST(req: NextRequest) {
     if (ext === "xlsx" || ext === "xls" || ext === "xlsm") {
       const buffer = Buffer.from(await req.arrayBuffer());
       const result = await processXlsx(buffer, filename);
+      finishStatus =
+        result.validation.skippedBadCpt > 0 || result.validation.flaggedHighPrice > 0
+          ? "processed_with_warnings"
+          : "processed";
+      rowsInserted = result.pricesInserted;
+      rowsRejected = result.validation.skippedLowPrice + result.validation.skippedBadCpt;
+      warningCount = result.validation.flaggedHighPrice + result.validation.flaggedMedicareOutlier;
       return NextResponse.json(result);
     }
 
@@ -737,16 +773,34 @@ export async function POST(req: NextRequest) {
     }
 
     if (pricesInserted === 0) {
-      return NextResponse.json({ error: "No valid price rows found after parsing.", schemaDetected: schema, validation }, { status: 400 });
+      errorMessage = "No valid price rows found after parsing.";
+      return NextResponse.json({ error: errorMessage, schemaDetected: schema, validation }, { status: 400 });
     }
 
+    finishStatus =
+      validation.skippedBadCpt > 0 || validation.flaggedHighPrice > 0
+        ? "processed_with_warnings"
+        : "processed";
+    rowsInserted = pricesInserted;
+    rowsRejected = validation.skippedLowPrice + validation.skippedBadCpt;
+    warningCount = validation.flaggedHighPrice + validation.flaggedMedicareOutlier;
     return NextResponse.json({ hospitalsUpserted, proceduresUpserted, pricesInserted, schemaDetected: schema, validation });
 
   } catch (err) {
     console.error("Upload error:", err);
+    errorMessage = err instanceof Error ? err.message : "Upload failed";
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Upload failed" },
+      { error: errorMessage },
       { status: 500 }
     );
+  } finally {
+    await finishSourceFile(inventoryId, {
+      status: finishStatus,
+      rowsInserted,
+      rowsRejected,
+      warningCount,
+      errorMessage,
+      parser: "upload-api",
+    });
   }
 }

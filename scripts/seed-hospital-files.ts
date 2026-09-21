@@ -178,7 +178,7 @@ function cmsObjectToRows(obj: Record<string, unknown>, hospitalName: string, add
 
   for (const charge of (obj.standard_charges as Record<string, unknown>[]) ?? []) {
     if (charge.gross_charge) {
-      rows.push({ ...base, payerName: "Gross", payerType: "gross", priceInCents: Math.round(Number(charge.gross_charge) * 100), priceType: "gross" });
+      rows.push({ ...base, payerName: "Gross", payerType: "other", priceInCents: Math.round(Number(charge.gross_charge) * 100), priceType: "gross" });
     }
     if (charge.discounted_cash) {
       rows.push({ ...base, payerName: "Cash", payerType: "cash", priceInCents: Math.round(Number(charge.discounted_cash) * 100), priceType: "discounted" });
@@ -307,7 +307,7 @@ function cmsCsvRowToNormalized(
   const grossStr = cols[parsed.grossIdx] ?? "";
   const gross = parseFloat(grossStr.replace(/[$,\s]/g, ""));
   if (!isNaN(gross) && gross > 0) {
-    rows.push({ ...base, payerName: "Gross", payerType: "gross", priceInCents: Math.round(gross * 100), priceType: "gross" });
+    rows.push({ ...base, payerName: "Gross", payerType: "other", priceInCents: Math.round(gross * 100), priceType: "gross" });
   }
 
   // Discounted cash

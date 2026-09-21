@@ -192,7 +192,7 @@ async function parseJsonBuffer(buffer: Buffer, filename: string): Promise<Normal
         const cptCode = codes.find((c) => c.type?.toUpperCase() === "CPT")?.code ?? "";
         const procedureName = String(item.description ?? cptCode);
         for (const charge of (item.standard_charges as Record<string, unknown>[]) ?? []) {
-          if (charge.gross_charge) rows.push({ hospitalName, address: "Manhattan, NY", cptCode, procedureName, category: "General", payerName: "Gross", payerType: "gross", priceInCents: Math.round(Number(charge.gross_charge) * 100), priceType: "gross" });
+          if (charge.gross_charge) rows.push({ hospitalName, address: "Manhattan, NY", cptCode, procedureName, category: "General", payerName: "Gross", payerType: "other", priceInCents: Math.round(Number(charge.gross_charge) * 100), priceType: "gross" });
           if (charge.discounted_cash) rows.push({ hospitalName, address: "Manhattan, NY", cptCode, procedureName, category: "General", payerName: "Cash", payerType: "cash", priceInCents: Math.round(Number(charge.discounted_cash) * 100), priceType: "discounted" });
           for (const payer of (charge.payers_information as Record<string, unknown>[]) ?? []) {
             const price = payer.standard_charge_dollar ?? payer.negotiated_rate;
