@@ -21,7 +21,7 @@ const prisma = new PrismaClient();
 // ── Test procedures ─────────────────────────────────────────────────────────
 
 const TEST_CASES: { label: string; query: string; expectedCpt: string; insurer: string; payerType: string }[] = [
-  { label: "Ankle fracture ORIF",        query: "I have a non-union ankle fracture and need surgery", expectedCpt: "27766", insurer: "Cigna",  payerType: "commercial" },
+  { label: "Ankle nonunion repair",      query: "I have a non-union ankle fracture and need surgery", expectedCpt: "27726", insurer: "Cigna",  payerType: "commercial" },
   { label: "Total knee replacement",      query: "Total knee replacement surgery",                     expectedCpt: "27447", insurer: "Aetna",  payerType: "commercial" },
   { label: "Total hip replacement",       query: "Total hip replacement",                              expectedCpt: "27130", insurer: "United",  payerType: "commercial" },
   { label: "ACL reconstruction",          query: "I tore my ACL and need reconstruction surgery",      expectedCpt: "29888", insurer: "Cigna",  payerType: "commercial" },

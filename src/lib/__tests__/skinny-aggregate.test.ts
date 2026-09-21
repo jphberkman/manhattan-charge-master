@@ -26,7 +26,54 @@ describe("SkinnyAggregator", () => {
     expect(knee.listCents).toBe(5000000);
     expect(knee.cashCents).toBe(2000000);
     expect(knee.negotiatedCents).toBe(2000000);
+    expect(knee.commercialCents).toBe(2000000);
     expect(knee.negotiatedMinCents).toBe(1000000);
     expect(knee.negotiatedMaxCents).toBe(3000000);
+  });
+
+  test("does not blend Medicare into commercial negotiated", () => {
+    const a = new SkinnyAggregator();
+    a.add({
+      code: "27766",
+      codeKind: "cpt-shaped",
+      description: "Medial malleolus",
+      priceType: "negotiated",
+      payerClass: "medicare",
+      priceCents: 845318,
+    });
+    a.add({
+      code: "27766",
+      codeKind: "cpt-shaped",
+      description: "Medial malleolus",
+      priceType: "negotiated",
+      payerClass: "commercial",
+      priceCents: 1002400,
+    });
+    a.add({
+      code: "27766",
+      codeKind: "cpt-shaped",
+      description: "Medial malleolus",
+      priceType: "cash",
+      priceCents: 845360,
+    });
+    const row = a.toRows()[0];
+    expect(row.negotiatedCents).toBe(1002400);
+    expect(row.commercialCents).toBe(1002400);
+    expect(row.medicareCents).toBe(845318);
+    expect(row.cashCents).toBe(845360);
+    expect(row.negotiatedMinCents).toBe(1002400);
+    expect(row.negotiatedMaxCents).toBe(1002400);
+  });
+
+  test("skips CDM codes that collide with CPT strings", () => {
+    const a = new SkinnyAggregator();
+    a.add({
+      code: "27766",
+      codeKind: "cdm",
+      description: "Internal item",
+      priceType: "cash",
+      priceCents: 100,
+    });
+    expect(a.toRows()).toHaveLength(0);
   });
 });

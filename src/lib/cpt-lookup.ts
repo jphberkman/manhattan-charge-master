@@ -1,14 +1,18 @@
 /**
  * CPT/HCPCS code lookup — condition mappings + CptCode table, cached in Redis.
  *
- * PERFORMANCE: Uses single raw SQL queries with OR matching + scoring instead of
- * multiple sequential Prisma queries. This reduces Neon round-trips from 6-8 to 2
- * (one for condition mappings, one for CptCode table, in parallel).
+ * Merges both sources (never drops CptCode hits when a condition mapping exists)
+ * and re-scores with clinical modifiers so "non-union ankle fracture" does not
+ * resolve to acute ORIF 27766.
  */
 
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@/generated/prisma";
 import { redis } from "@/lib/redis";
+import {
+  extractKeywords,
+  scoreDescriptionMatch,
+} from "@/lib/price-transparency/search-text";
 
 export interface CptMatch {
   code: string;
@@ -17,32 +21,31 @@ export interface CptMatch {
   matchReason: string;   // explanation of why this code matched
 }
 
-/** Common English words that add noise. */
-const STOP_WORDS = new Set([
-  "i", "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-  "of", "is", "it", "my", "me", "we", "our", "am", "be", "do", "if", "so",
-  "have", "has", "had", "was", "were", "been", "are", "will", "can", "may",
-  "not", "no", "this", "that", "with", "from", "being", "what", "how",
-  "does", "need", "want", "like", "just", "get", "got", "its",
-  "doctor", "told", "says", "think", "know", "going", "would", "could",
-  "should", "very", "much", "some", "also", "about",
-]);
+export { extractKeywords, scoreDescriptionMatch, normalizeSearchText } from "@/lib/price-transparency/search-text";
 
-/** Medical terms common in patient queries but too generic for CPT matching. */
-const MEDICAL_STOP_WORDS = new Set([
-  "surgery", "surgical", "procedure", "operation", "treatment",
-  "diagnosed", "diagnosis", "condition", "problem", "issue",
-  "recommend", "recommends", "recommended",
-]);
+const CACHE_PREFIX = "cpt9";
 
-/** Extract meaningful medical keywords from a query. */
-function extractKeywords(query: string): string[] {
-  return query
-    .trim()
-    .toLowerCase()
-    .split(/[\s,;]+/)
-    .filter((w) => w.length >= 2 && !STOP_WORDS.has(w) && !MEDICAL_STOP_WORDS.has(w))
-    .slice(0, 6);
+function hyphenInsensitivePattern(keyword: string): string {
+  return `%${keyword.replace(/-/g, "")}%`;
+}
+
+function sqlLikePatterns(keywords: string[]): string[] {
+  const out: string[] = [];
+  for (const k of keywords) {
+    out.push(hyphenInsensitivePattern(k));
+    if (k === "nonunion") {
+      out.push("%nonhealed%");
+      out.push("%non-union%");
+      out.push("%non union%");
+    }
+    if (k === "fracture") out.push("%broken%");
+  }
+  return [...new Set(out)];
+}
+
+function consider(byCode: Map<string, CptMatch>, match: CptMatch) {
+  const prev = byCode.get(match.code);
+  if (!prev || match.confidence > prev.confidence) byCode.set(match.code, match);
 }
 
 /**
@@ -57,7 +60,7 @@ export async function searchCptCodes(
   const trimmed = query.trim().toLowerCase();
   if (!trimmed) return [];
 
-  const cacheKey = `cpt8:${trimmed}:${limit}`;
+  const cacheKey = `${CACHE_PREFIX}:${trimmed}:${limit}`;
 
   try {
     const cached = await redis.get<CptMatch[]>(cacheKey);
@@ -86,78 +89,64 @@ export async function searchCptCodes(
     const keywords = extractKeywords(trimmed);
     if (keywords.length === 0) return [];
 
-    // Build LIKE patterns for each keyword
-    const patterns = keywords.map((w) => `%${w}%`);
+    const patterns = sqlLikePatterns(keywords);
 
-    // ── Single SQL query per table, run in PARALLEL ──────────────────────
     const [conditionRows, cptRows] = await Promise.all([
-      // Condition mappings: OR match with scoring
       prisma.$queryRaw<{ cptCode: string; procedureName: string; score: number; weight: number }[]>`
         SELECT "cptCode", "procedureName", weight,
           (${Prisma.join(
-            patterns.map((p) => Prisma.sql`CASE WHEN LOWER(condition) LIKE ${p} THEN 1 ELSE 0 END`),
+            patterns.map((p) => Prisma.sql`CASE WHEN REPLACE(LOWER(condition), '-', '') LIKE ${p} THEN 1 ELSE 0 END`),
             " + ",
           )}) AS score
         FROM "ConditionMapping"
         WHERE ${Prisma.join(
-          patterns.map((p) => Prisma.sql`LOWER(condition) LIKE ${p}`),
+          patterns.map((p) => Prisma.sql`REPLACE(LOWER(condition), '-', '') LIKE ${p}`),
           " OR ",
         )}
         ORDER BY score DESC, weight DESC
-        LIMIT ${limit * 2}
+        LIMIT ${limit * 3}
       `,
-      // CptCode table: OR match with scoring
       prisma.$queryRaw<{ code: string; description: string; score: number }[]>`
         SELECT code, description,
           (${Prisma.join(
-            patterns.map((p) => Prisma.sql`CASE WHEN LOWER(description) LIKE ${p} THEN 1 ELSE 0 END`),
+            patterns.map((p) => Prisma.sql`CASE WHEN REPLACE(LOWER(description), '-', '') LIKE ${p} THEN 1 ELSE 0 END`),
             " + ",
           )}) AS score
         FROM "CptCode"
         WHERE ${Prisma.join(
-          patterns.map((p) => Prisma.sql`LOWER(description) LIKE ${p}`),
+          patterns.map((p) => Prisma.sql`REPLACE(LOWER(description), '-', '') LIKE ${p}`),
           " OR ",
         )}
         ORDER BY score DESC
-        LIMIT ${limit * 2}
+        LIMIT ${limit * 3}
       `,
     ]);
 
-    // Dedupe condition matches by CPT code, prefer highest score
-    const conditionResults: CptMatch[] = [];
-    const seenCodes = new Set<string>();
+    const byCode = new Map<string, CptMatch>();
+
     for (const r of conditionRows) {
-      if (seenCodes.has(r.cptCode)) continue;
-      seenCodes.add(r.cptCode);
-      // Confidence: combine SQL keyword score (proportion of keywords matched) + weight
-      const keywordPct = keywords.length > 0 ? (Number(r.score) / keywords.length) * 100 : 0;
-      const weightBonus = Math.min(Number(r.weight) * 5, 20); // up to 20 bonus pts from weight
-      const confidence = Math.min(100, Math.round(keywordPct + weightBonus));
-      conditionResults.push({
+      const scored = scoreDescriptionMatch(trimmed, r.procedureName, { weight: Number(r.weight) });
+      consider(byCode, {
         code: r.cptCode,
         description: r.procedureName,
-        confidence,
-        matchReason: `Condition mapping: ${Number(r.score)}/${keywords.length} keywords matched (weight ${r.weight})`,
+        confidence: scored.confidence,
+        matchReason: `Condition mapping: ${scored.matched}/${scored.keywords.length} keywords matched (weight ${r.weight})`,
       });
-      if (conditionResults.length >= limit) break;
     }
 
-    // CptCode results (already ordered by score DESC)
-    const cptResults: CptMatch[] = cptRows
-      .slice(0, limit)
-      .map((r) => {
-        const keywordPct = keywords.length > 0 ? (Number(r.score) / keywords.length) * 100 : 0;
-        const confidence = Math.min(100, Math.round(keywordPct));
-        return {
-          code: r.code,
-          description: r.description,
-          confidence,
-          matchReason: `Description keyword match: ${Number(r.score)}/${keywords.length} keywords matched`,
-        };
+    for (const r of cptRows) {
+      const scored = scoreDescriptionMatch(trimmed, r.description);
+      consider(byCode, {
+        code: r.code,
+        description: r.description,
+        confidence: scored.confidence,
+        matchReason: `Description keyword match: ${scored.matched}/${scored.keywords.length} keywords matched`,
       });
+    }
 
-    // Prefer condition mappings (curated symptom→procedure), fall back to CptCode
-    const results = conditionResults.length ? conditionResults : cptResults;
+    const results = [...byCode.values()]
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, limit);
 
     try { await redis.set(cacheKey, results, { ex: 86400 }); } catch { /* ignore */ }
     return results;

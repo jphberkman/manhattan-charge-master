@@ -742,18 +742,66 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
             </div>
           )}
 
+          {/* CPT picker — never hide that more than one billing code matched */}
+          {dbMatches.length > 0 && (
+            <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+              <div className="border-b border-neutral-100 px-5 py-3">
+                <p className="text-sm font-semibold text-neutral-800">Billing code</p>
+                <p className="mt-0.5 text-xs text-neutral-500">
+                  {dbMatches.length > 1
+                    ? "More than one published code matched — pick the CPT your doctor named. Prices below follow this code."
+                    : "Prices below are for this published billing code."}
+                </p>
+              </div>
+              <div className="divide-y divide-neutral-100">
+                {dbMatches.map((m) => {
+                  const active = selectedMatch?.cptCode === m.cptCode;
+                  return (
+                    <button
+                      key={m.cptCode}
+                      type="button"
+                      onClick={() => setSelectedMatch(m)}
+                      className={cn(
+                        "flex w-full items-start gap-3 px-5 py-3 text-left transition-colors",
+                        active ? "bg-violet-50" : "hover:bg-neutral-50",
+                      )}
+                    >
+                      <span className={cn(
+                        "mt-0.5 font-mono text-sm font-semibold",
+                        active ? "text-violet-700" : "text-neutral-700",
+                      )}>
+                        {m.cptCode}
+                      </span>
+                      <span className="flex-1 text-sm text-neutral-700">{m.name}</span>
+                      <span className={cn(
+                        "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                        m.matchQuality === "exact" || m.matchQuality === "strong"
+                          ? "bg-green-100 text-green-700"
+                          : m.matchQuality === "partial"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-neutral-100 text-neutral-500",
+                      )}>
+                        {m.matchQuality}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Hospital comparison — loads immediately, upgrades silently when AI breakdown arrives */}
           {showComparison ? (
             <PlanComparisonMode
-              cptCode={breakdown?.cptCode ?? selectedMatch.cptCode}
-              procedureName={breakdown?.procedureName ?? selectedMatch.name}
+              cptCode={selectedMatch.cptCode}
+              procedureName={selectedMatch.name}
               coinsurance={coinsurance}
-              allCptCodes={breakdown ? [breakdown.cptCode ?? selectedMatch.cptCode] : undefined}
+              allCptCodes={breakdown ? [selectedMatch.cptCode] : undefined}
             />
           ) : (
             <HospitalCostComparison
-              cptCode={breakdown?.cptCode ?? selectedMatch.cptCode}
-              procedureName={breakdown?.procedureName ?? selectedMatch.name}
+              cptCode={selectedMatch.cptCode}
+              procedureName={selectedMatch.name}
               insurance={insurance}
               coinsurance={coinsurance}
               planDetails={planDetails}
@@ -777,8 +825,8 @@ export function AiProcedureSearch({ onBreakdownReady }: Props) {
 
           {/* Physician recommendations */}
           <PhysicianRecommendations
-            procedureName={breakdown?.procedureName ?? selectedMatch.name}
-            cptCode={breakdown?.cptCode ?? selectedMatch.cptCode}
+            procedureName={selectedMatch.name}
+            cptCode={selectedMatch.cptCode}
             insurance={insurance}
             hospitalPrices={hospitalPrices}
           />

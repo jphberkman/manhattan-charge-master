@@ -155,8 +155,14 @@ model PriceIndex {
   listCents          Int?
   /** Discounted cash / self-pay (median). */
   cashCents          Int?
-  /** Median payer-negotiated dollar amount (all commercial/gov payers with a $). */
+  /**
+   * Commercial negotiated median. Kept as negotiatedCents for the original
+   * skinny-table contract (list / cash / negotiated). Never a blend of Medicare/Medicaid.
+   */
   negotiatedCents    Int?
+  commercialCents    Int?
+  medicareCents      Int?
+  medicaidCents      Int?
   negotiatedMinCents Int?
   negotiatedMaxCents Int?
   sampleCount        Int       @default(0)

@@ -31,6 +31,7 @@ import {
 import { SkinnyAggregator } from "../../src/lib/price-transparency/skinny-aggregate";
 import { SHOPPER_HOSPITALS } from "../../src/lib/price-transparency/shopper-hospitals";
 import {
+  classifyPayer,
   ensureShopperHospital,
   normalizeCodeType,
   parseMoneyCents,
@@ -133,10 +134,14 @@ function addMoney(
   description: string,
   priceType: "gross" | "cash" | "negotiated",
   raw: unknown,
+  payerName?: string,
+  planName?: string,
 ) {
   const cents = parseMoneyCents(raw);
   if (!cents) return;
-  agg.add({ code, codeKind, description, priceType, priceCents: cents });
+  const payerClass =
+    priceType === "negotiated" ? classifyPayer(payerName ?? "", planName) : priceType;
+  agg.add({ code, codeKind, description, priceType, payerClass, priceCents: cents });
 }
 
 async function parseJson(file: string, agg: SkinnyAggregator): Promise<void> {
@@ -164,6 +169,8 @@ async function parseJson(file: string, agg: SkinnyAggregator): Promise<void> {
           description,
           "negotiated",
           p.standard_charge_dollar ?? p.standard_estimated_amount ?? p.estimated_amount,
+          String(p.payer_name ?? ""),
+          String(p.plan_name ?? ""),
         );
       }
     }
@@ -208,7 +215,16 @@ async function parseTallCsv(file: string, agg: SkinnyAggregator): Promise<void> 
               addMoney(agg, primary.code, primary.kind, description, "cash", g("standard_charge|discounted_cash"));
             }
             if (g("payer_name")) {
-              addMoney(agg, primary.code, primary.kind, description, "negotiated", g("standard_charge|negotiated_dollar"));
+              addMoney(
+                agg,
+                primary.code,
+                primary.kind,
+                description,
+                "negotiated",
+                g("standard_charge|negotiated_dollar"),
+                g("payer_name"),
+                g("plan_name"),
+              );
             }
           }
           parserHandle.resume();
@@ -225,7 +241,7 @@ async function parseTallCsv(file: string, agg: SkinnyAggregator): Promise<void> 
 async function parseWideCsv(file: string, agg: SkinnyAggregator): Promise<void> {
   let header: string[] | null = null;
   let idx: Record<string, number> = {};
-  const dollarIdx: number[] = [];
+  const payerCols: { payer: string; plan: string; dollarIdx: number }[] = [];
   let rowNo = 0;
   await new Promise<void>((resolve, rejectP) => {
     Papa.parse<string[]>(openSource(file, "utf8"), {
@@ -241,7 +257,8 @@ async function parseWideCsv(file: string, agg: SkinnyAggregator): Promise<void> 
               header = row.map((h) => h.trim());
               idx = Object.fromEntries(header.map((h, i) => [h, i]));
               header.forEach((h, i) => {
-                if (/^standard_charge\|[^|]+\|[^|]+\|negotiated_dollar$/.test(h)) dollarIdx.push(i);
+                const m = h.match(/^standard_charge\|([^|]+)\|([^|]+)\|negotiated_dollar$/);
+                if (m) payerCols.push({ payer: m[1], plan: m[2], dollarIdx: i });
               });
               continue;
             }
@@ -259,7 +276,18 @@ async function parseWideCsv(file: string, agg: SkinnyAggregator): Promise<void> 
             if (!primary.code || !description) continue;
             addMoney(agg, primary.code, primary.kind, description, "gross", g("standard_charge|gross"));
             addMoney(agg, primary.code, primary.kind, description, "cash", g("standard_charge|discounted_cash"));
-            for (const i of dollarIdx) addMoney(agg, primary.code, primary.kind, description, "negotiated", row[i]);
+            for (const col of payerCols) {
+              addMoney(
+                agg,
+                primary.code,
+                primary.kind,
+                description,
+                "negotiated",
+                row[col.dollarIdx],
+                col.payer,
+                col.plan,
+              );
+            }
           }
           parserHandle.resume();
         } catch (err) {
@@ -283,7 +311,7 @@ async function copyIndex(
   if (!rows.length) return 0;
   const stream = client.query(
     copyFrom(
-      `COPY "PriceIndex" (id, "hospitalId", code, "codeKind", description, "listCents", "cashCents", "negotiatedCents", "negotiatedMinCents", "negotiatedMaxCents", "sampleCount", "objectKey", "asOf", "ingestedAt") FROM STDIN WITH (FORMAT csv)`,
+      `COPY "PriceIndex" (id, "hospitalId", code, "codeKind", description, "listCents", "cashCents", "negotiatedCents", "commercialCents", "medicareCents", "medicaidCents", "negotiatedMinCents", "negotiatedMaxCents", "sampleCount", "objectKey", "asOf", "ingestedAt") FROM STDIN WITH (FORMAT csv)`,
     ),
   );
   const now = new Date().toISOString();
@@ -295,7 +323,15 @@ async function copyIndex(
       else stream.once("drain", resolve);
     });
   for (const r of rows) {
-    if (r.listCents == null && r.cashCents == null && r.negotiatedCents == null) continue;
+    if (
+      r.listCents == null &&
+      r.cashCents == null &&
+      r.commercialCents == null &&
+      r.medicareCents == null &&
+      r.medicaidCents == null
+    ) {
+      continue;
+    }
     i++;
     await write(
       [
@@ -307,6 +343,9 @@ async function copyIndex(
         r.listCents ?? "",
         r.cashCents ?? "",
         r.negotiatedCents ?? "",
+        r.commercialCents ?? "",
+        r.medicareCents ?? "",
+        r.medicaidCents ?? "",
         r.negotiatedMinCents ?? "",
         r.negotiatedMaxCents ?? "",
         String(r.sampleCount),

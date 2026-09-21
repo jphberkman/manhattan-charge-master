@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { redis } from "@/lib/redis";
 import { searchCptCodes } from "@/lib/cpt-lookup";
+import { scoreDescriptionMatch } from "@/lib/price-transparency/search-text";
 import { classifyMedicalCode } from "@/lib/authoritative/code-kind";
 import { searchHcpcs, searchIcd10Cm, type NlmCodeHit } from "@/lib/authoritative/nlm-clinical-tables";
 import {
@@ -48,7 +49,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ procedures: [], noData: true } satisfies ProcedureSearchResponse);
   }
 
-  const cacheKey = `search12:${query.trim().toLowerCase()}`;
+  const cacheKey = `search13:${query.trim().toLowerCase()}`;
   const cached = await redis.get<ProcedureSearchResponse>(cacheKey);
   if (cached) return NextResponse.json(cached);
 
@@ -94,19 +95,28 @@ export async function POST(req: NextRequest) {
       searchServiceDescriptions(query, 12).catch(() => []),
       searchCptCodes(query, 10),
     ]);
-    for (const hit of descHits) {
-      if (!cptDescriptions.has(hit.code)) {
-        cptCodes.push(hit.code);
-        cptDescriptions.set(hit.code, hit.description);
-        cptConfidence.set(hit.code, Math.min(95, 60 + hit.hospitalCount * 5));
+    const consider = (code: string, description: string, confidence: number) => {
+      if (!cptDescriptions.has(code)) {
+        cptCodes.push(code);
+        cptDescriptions.set(code, description);
+        cptConfidence.set(code, confidence);
+        return;
       }
-    }
+      const prev = cptConfidence.get(code) ?? 0;
+      if (confidence > prev) {
+        cptConfidence.set(code, confidence);
+        if (description.length > (cptDescriptions.get(code)?.length ?? 0)) {
+          cptDescriptions.set(code, description);
+        }
+      }
+    };
     for (const m of cptMatches) {
-      if (!cptDescriptions.has(m.code)) {
-        cptCodes.push(m.code);
-        cptDescriptions.set(m.code, m.description);
-        cptConfidence.set(m.code, m.confidence);
-      }
+      consider(m.code, m.description, m.confidence);
+    }
+    for (const hit of descHits) {
+      if (hit.codeKind !== "cpt-shaped" && hit.codeKind !== "hcpcs-level-2") continue;
+      const scored = scoreDescriptionMatch(query, hit.description);
+      consider(hit.code, hit.description, scored.confidence);
     }
   }
 

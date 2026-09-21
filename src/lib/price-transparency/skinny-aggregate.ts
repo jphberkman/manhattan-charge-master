@@ -5,6 +5,8 @@ export interface ChargeSample {
   codeKind: string;
   description: string;
   priceType: "gross" | "cash" | "negotiated";
+  /** gross | cash | commercial | medicare | medicaid | other — used for negotiated splits. */
+  payerClass?: string;
   priceCents: number;
 }
 
@@ -15,6 +17,9 @@ export interface SkinnyRow {
   listCents: number | null;
   cashCents: number | null;
   negotiatedCents: number | null;
+  commercialCents: number | null;
+  medicareCents: number | null;
+  medicaidCents: number | null;
   negotiatedMinCents: number | null;
   negotiatedMaxCents: number | null;
   sampleCount: number;
@@ -25,10 +30,13 @@ interface Acc {
   description: string;
   list: number[];
   cash: number[];
-  negotiated: number[];
+  commercial: number[];
+  medicare: number[];
+  medicaid: number[];
 }
 
 const MAX_SAMPLES = 4000;
+const INDEX_KINDS = new Set(["cpt-shaped", "hcpcs-level-2"]);
 
 export function medianCents(values: number[]): number | null {
   if (!values.length) return null;
@@ -42,7 +50,6 @@ function pushCapped(arr: number[], v: number) {
     arr.push(v);
     return;
   }
-  // Reservoir: keep a uniform sample so the median stays meaningful on huge files.
   const i = Math.floor(Math.random() * (arr.length + 1));
   if (i < arr.length) arr[i] = v;
 }
@@ -56,34 +63,53 @@ export class SkinnyAggregator {
     this.discovered++;
     const code = sample.code.trim();
     if (!code || sample.priceCents <= 0) return;
+    if (sample.codeKind && !INDEX_KINDS.has(sample.codeKind) && sample.codeKind !== "unknown") {
+      return;
+    }
     this.accepted++;
     let acc = this.byCode.get(code);
     if (!acc) {
-      acc = { codeKind: sample.codeKind, description: sample.description, list: [], cash: [], negotiated: [] };
+      acc = {
+        codeKind: sample.codeKind,
+        description: sample.description,
+        list: [],
+        cash: [],
+        commercial: [],
+        medicare: [],
+        medicaid: [],
+      };
       this.byCode.set(code, acc);
     }
     if (sample.description && sample.description.length > acc.description.length) acc.description = sample.description;
-    if (sample.codeKind && acc.codeKind === "unknown") acc.codeKind = sample.codeKind;
+    if (sample.codeKind && INDEX_KINDS.has(sample.codeKind)) acc.codeKind = sample.codeKind;
     if (sample.priceType === "gross") pushCapped(acc.list, sample.priceCents);
     else if (sample.priceType === "cash") pushCapped(acc.cash, sample.priceCents);
-    else pushCapped(acc.negotiated, sample.priceCents);
+    else {
+      const cls = sample.payerClass ?? "commercial";
+      if (cls === "medicare") pushCapped(acc.medicare, sample.priceCents);
+      else if (cls === "medicaid") pushCapped(acc.medicaid, sample.priceCents);
+      else pushCapped(acc.commercial, sample.priceCents);
+    }
   }
 
   toRows(): SkinnyRow[] {
     const rows: SkinnyRow[] = [];
     for (const [code, acc] of this.byCode) {
-      const nmin = acc.negotiated.length ? Math.min(...acc.negotiated) : null;
-      const nmax = acc.negotiated.length ? Math.max(...acc.negotiated) : null;
+      if (!INDEX_KINDS.has(acc.codeKind)) continue;
+      const commercial = medianCents(acc.commercial);
       rows.push({
         code,
         codeKind: acc.codeKind,
         description: acc.description.slice(0, 800),
         listCents: medianCents(acc.list),
         cashCents: medianCents(acc.cash),
-        negotiatedCents: medianCents(acc.negotiated),
-        negotiatedMinCents: nmin,
-        negotiatedMaxCents: nmax,
-        sampleCount: acc.list.length + acc.cash.length + acc.negotiated.length,
+        negotiatedCents: commercial,
+        commercialCents: commercial,
+        medicareCents: medianCents(acc.medicare),
+        medicaidCents: medianCents(acc.medicaid),
+        negotiatedMinCents: acc.commercial.length ? Math.min(...acc.commercial) : null,
+        negotiatedMaxCents: acc.commercial.length ? Math.max(...acc.commercial) : null,
+        sampleCount: acc.list.length + acc.cash.length + acc.commercial.length + acc.medicare.length + acc.medicaid.length,
       });
     }
     return rows;
